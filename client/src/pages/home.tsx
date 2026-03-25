@@ -35,12 +35,15 @@ import {
   Check,
   FolderDown,
   Mountain,
+  LayoutGrid,
+  Play,
+  Package,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
 import { DEMO_LOCATIONS, DEMO_PROFILE } from "@/lib/demo-data";
 
-type Step = "upload" | "configure" | "select-location" | "analyzing" | "results";
+type Step = "upload" | "configure" | "dashboard" | "analyzing" | "results";
 
 interface Provider {
   id: "openai" | "anthropic" | "google";
@@ -176,6 +179,18 @@ const PROFILE_SECTIONS = [
   },
 ];
 
+// Colors for avatar initials based on importance
+const IMPORTANCE_COLORS: Record<string, { bg: string; text: string }> = {
+  major: { bg: "bg-primary", text: "text-primary-foreground" },
+  minor: { bg: "bg-amber-500/20 dark:bg-amber-400/20", text: "text-amber-700 dark:text-amber-300" },
+  background: { bg: "bg-muted", text: "text-muted-foreground" },
+};
+
+interface DevelopedItem {
+  profile: LocationProfile;
+  visualImages: Record<string, string>;
+}
+
 export default function HomePage() {
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
@@ -189,9 +204,13 @@ export default function HomePage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [detectedLocations, setDetectedLocations] = useState<DetectedLocation[]>([]);
-  const [selectedLocation, setSelectedLocation] = useState<string>("");
-  const [profile, setProfile] = useState<LocationProfile | null>(null);
-  const [visualImages, setVisualImages] = useState<Record<string, string>>({});
+
+  // Multi-panel state
+  const [developedItems, setDevelopedItems] = useState<Record<string, DevelopedItem>>({});
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  const [developingLocation, setDevelopingLocation] = useState<string | null>(null);
+  const [isDevelopingAll, setIsDevelopingAll] = useState(false);
+
   const [generatingLayer, setGeneratingLayer] = useState<string | null>(null);
   const [artStyle, setArtStyle] = useState("cinematic");
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
@@ -201,11 +220,21 @@ export default function HomePage() {
   const [isScanning, setIsScanning] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingAll, setIsExportingAll] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisStage, setAnalysisStage] = useState("");
   const [activeSection, setActiveSection] = useState("1");
 
+  // Dashboard filters
+  const [filterImportance, setFilterImportance] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"importance" | "name">("importance");
+
   const currentProvider = PROVIDERS.find((p) => p.id === provider)!;
+
+  // The current expanded item's profile and visual images
+  const currentProfile = expandedItem ? developedItems[expandedItem]?.profile ?? null : null;
+  const currentVisualImages = expandedItem ? developedItems[expandedItem]?.visualImages ?? {} : {};
+  const selectedLocation = expandedItem || "";
 
   // Visual study layer definitions — 6 panels for locations
   const VISUAL_LAYERS = [
@@ -251,7 +280,9 @@ export default function HomePage() {
       setIsScanning(true);
       await new Promise((r) => setTimeout(r, 800));
       setDetectedLocations(DEMO_LOCATIONS);
-      setStep("select-location");
+      setDevelopedItems({});
+      setExpandedItem(null);
+      setStep("dashboard");
       setIsScanning(false);
       return;
     }
@@ -278,12 +309,11 @@ export default function HomePage() {
       if (data.error) throw new Error(data.error);
 
       setDetectedLocations(data.locations);
+      setDevelopedItems({});
+      setExpandedItem(null);
 
-      if (data.locations.length === 1) {
-        setSelectedLocation(data.locations[0].name);
-        await runAnalysis(data.locations[0].name);
-      } else if (data.locations.length > 1) {
-        setStep("select-location");
+      if (data.locations.length > 0) {
+        setStep("dashboard");
       } else {
         toast({ title: "No locations found", description: "Try adding more text or detail.", variant: "destructive" });
       }
@@ -294,10 +324,11 @@ export default function HomePage() {
     }
   };
 
-  // Step 2: Full analysis
-  const runAnalysis = async (locationName: string) => {
+  // Step 2: Full analysis — now stores into developedItems
+  const runAnalysis = async (locationName: string): Promise<boolean> => {
     // Demo mode
     if (demoMode) {
+      setDevelopingLocation(locationName);
       setStep("analyzing");
       setIsAnalyzing(true);
       setAnalysisProgress(0);
@@ -314,13 +345,17 @@ export default function HomePage() {
         setAnalysisProgress(stage.pct);
         setAnalysisStage(stage.label);
       }
-      setProfile(DEMO_PROFILE);
-      setVisualImages({});
+      setDevelopedItems((prev) => ({
+        ...prev,
+        [locationName]: { profile: DEMO_PROFILE, visualImages: {} },
+      }));
       setIsAnalyzing(false);
-      setStep("results");
-      return;
+      setDevelopingLocation(null);
+      setStep("dashboard");
+      return true;
     }
 
+    setDevelopingLocation(locationName);
     setStep("analyzing");
     setIsAnalyzing(true);
     setAnalysisProgress(0);
@@ -361,38 +396,68 @@ export default function HomePage() {
       setAnalysisProgress(100);
       setAnalysisStage("Profile complete.");
 
-      setProfile(data.profile);
-      setStep("results");
+      setDevelopedItems((prev) => ({
+        ...prev,
+        [locationName]: { profile: data.profile, visualImages: {} },
+      }));
+      setStep("dashboard");
+      return true;
     } catch (err: any) {
       clearInterval(progressInterval);
       toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
-      setStep("configure");
+      setStep("dashboard");
+      return false;
     } finally {
       setIsAnalyzing(false);
+      setDevelopingLocation(null);
     }
   };
 
-  const handleLocationSelect = async (name: string) => {
-    setSelectedLocation(name);
+  // Develop a single location from the dashboard
+  const handleDevelop = async (name: string) => {
     await runAnalysis(name);
   };
 
-  // Export DOCX
+  // Develop all undeveloped locations sequentially
+  const handleDevelopAll = async () => {
+    setIsDevelopingAll(true);
+    const undeveloped = detectedLocations.filter((loc) => !developedItems[loc.name]);
+    for (const loc of undeveloped) {
+      const success = await runAnalysis(loc.name);
+      if (!success) break;
+    }
+    setIsDevelopingAll(false);
+  };
+
+  // View a developed location
+  const handleView = (name: string) => {
+    setExpandedItem(name);
+    setActiveSection("1");
+    setStep("results");
+  };
+
+  // Back to dashboard from results
+  const handleBackToDashboard = () => {
+    setExpandedItem(null);
+    setStep("dashboard");
+  };
+
+  // Export single DOCX
   const handleExport = async () => {
-    if (!profile) return;
+    if (!currentProfile || !expandedItem) return;
     setIsExporting(true);
 
     try {
       const res = await apiRequest("POST", "/api/export-docx", {
-        profile,
-        images: visualImages,
+        profile: currentProfile,
+        images: currentVisualImages,
       });
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${selectedLocation || "Location"}_Profile.docx`;
+      a.download = `${expandedItem || "Location"}_Profile.docx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -403,6 +468,39 @@ export default function HomePage() {
       toast({ title: "Export failed", description: err.message, variant: "destructive" });
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  // Export All Developed as combined DOCX
+  const handleExportAll = async () => {
+    const devEntries = Object.entries(developedItems);
+    if (devEntries.length === 0) return;
+    setIsExportingAll(true);
+
+    try {
+      const items = devEntries.map(([name, item]) => ({
+        name,
+        profile: item.profile,
+        images: item.visualImages,
+      }));
+
+      const res = await apiRequest("POST", "/api/export-all-docx", { items });
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "All_Location_Profiles.docx";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({ title: "Exported", description: `Combined DOCX with ${devEntries.length} locations downloaded.` });
+    } catch (err: any) {
+      toast({ title: "Export failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExportingAll(false);
     }
   };
 
@@ -417,7 +515,7 @@ export default function HomePage() {
 
   // Download a single image
   const handleDownloadImage = (layerKey: string, layerTitle: string) => {
-    const b64 = visualImages[layerKey];
+    const b64 = currentVisualImages[layerKey];
     if (!b64) return;
     const link = document.createElement("a");
     link.href = `data:image/png;base64,${b64}`;
@@ -429,7 +527,7 @@ export default function HomePage() {
 
   // Download all images as ZIP
   const handleDownloadAllImages = async () => {
-    const entries = Object.entries(visualImages);
+    const entries = Object.entries(currentVisualImages);
     if (entries.length === 0) return;
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
@@ -490,14 +588,13 @@ export default function HomePage() {
   // Rate-limit delay helper
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  // Generate a single visual layer
+  // Generate a single visual layer — now updates developedItems
   const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: string) => {
-    if (!prompt || demoMode) return;
+    if (!prompt || demoMode || !expandedItem) return;
     setGeneratingLayer(layerKey);
     try {
       const imgProvider = provider === "anthropic" ? "openai" : provider;
-      // Build references: user uploads + establishing anchor (for non-establishing layers)
-      const anchor = anchorOverride || (layerKey !== "establishing" ? visualImages["establishing"] : undefined);
+      const anchor = anchorOverride || (layerKey !== "establishing" ? currentVisualImages["establishing"] : undefined);
       const refs = buildReferenceArray(anchor);
       
       const imgRes = await apiRequest("POST", "/api/generate-image", {
@@ -510,7 +607,13 @@ export default function HomePage() {
       const imgData = await imgRes.json();
       if (imgData.error) throw new Error(imgData.error);
       if (imgData.image) {
-        setVisualImages((prev) => ({ ...prev, [layerKey]: imgData.image }));
+        setDevelopedItems((prev) => ({
+          ...prev,
+          [expandedItem]: {
+            ...prev[expandedItem],
+            visualImages: { ...prev[expandedItem].visualImages, [layerKey]: imgData.image },
+          },
+        }));
         toast({ title: `${layerKey === "establishing" ? "Anchor image" : "Image"} generated` });
         return imgData.image as string;
       }
@@ -524,11 +627,11 @@ export default function HomePage() {
 
   // Generate all visual layers sequentially with rate-limit delays
   const handleGenerateAll = async () => {
-    if (!profile || demoMode) return;
+    if (!currentProfile || demoMode || !expandedItem) return;
     
     // Step 1: Generate the establishing shot (anchor) first
-    const establishingPrompt = profile["visualEstablishing" as keyof LocationProfile] as string;
-    let anchorImage = visualImages["establishing"];
+    const establishingPrompt = currentProfile["visualEstablishing" as keyof LocationProfile] as string;
+    let anchorImage = currentVisualImages["establishing"];
     if (!anchorImage && establishingPrompt) {
       anchorImage = await handleGenerateVisual("establishing", establishingPrompt) || undefined;
       await delay(8000);
@@ -538,8 +641,8 @@ export default function HomePage() {
     for (let i = 0; i < VISUAL_LAYERS.length; i++) {
       const layer = VISUAL_LAYERS[i];
       if (layer.key === "establishing" || layer.key === "custom") continue;
-      const prompt = profile[layer.profileKey] as string;
-      if (prompt && !visualImages[layer.key]) {
+      const prompt = currentProfile[layer.profileKey] as string;
+      if (prompt && !currentVisualImages[layer.key]) {
         await handleGenerateVisual(layer.key, prompt, anchorImage);
         if (i < VISUAL_LAYERS.length - 1) {
           await delay(8000);
@@ -553,13 +656,26 @@ export default function HomePage() {
     setStep("upload");
     setSourceText("");
     setDetectedLocations([]);
-    setSelectedLocation("");
-    setProfile(null);
-    setVisualImages({});
+    setDevelopedItems({});
+    setExpandedItem(null);
     setUserReferenceImages([]);
     setAnalysisProgress(0);
     setAnalysisStage("");
   };
+
+  // Dashboard helpers
+  const developedCount = Object.keys(developedItems).length;
+  const totalCount = detectedLocations.length;
+  const importanceOrder: Record<string, number> = { major: 0, minor: 1, background: 2 };
+
+  const filteredLocations = detectedLocations
+    .filter((loc) => filterImportance === "all" || loc.estimatedImportance === filterImportance)
+    .sort((a, b) => {
+      if (sortBy === "importance") {
+        return (importanceOrder[a.estimatedImportance] ?? 3) - (importanceOrder[b.estimatedImportance] ?? 3);
+      }
+      return a.name.localeCompare(b.name);
+    });
 
   return (
     <div className="min-h-screen bg-background">
@@ -579,7 +695,13 @@ export default function HomePage() {
           </div>
           <div className="flex items-center gap-2">
             {step === "results" && (
-              <Button variant="ghost" size="sm" onClick={handleReset} data-testid="button-new-location">
+              <Button variant="ghost" size="sm" onClick={handleBackToDashboard} data-testid="button-back-dashboard">
+                <ArrowLeft className="w-4 h-4 mr-1.5" />
+                Dashboard
+              </Button>
+            )}
+            {step === "dashboard" && (
+              <Button variant="ghost" size="sm" onClick={handleReset} data-testid="button-new-scan">
                 <ArrowLeft className="w-4 h-4 mr-1.5" />
                 New
               </Button>
@@ -604,10 +726,10 @@ export default function HomePage() {
           <div className="space-y-6">
             {/* Hero */}
             <div className="text-center space-y-2 pb-2">
-              <h1 className="font-serif font-bold text-xl">Build a Location Profile</h1>
+              <h1 className="font-serif font-bold text-xl">Build Location Profiles</h1>
               <p className="text-muted-foreground text-sm max-w-lg mx-auto">
                 Upload a story manuscript or location description. The AI will scan for locations,
-                then generate a complete 10-section development profile with a visual study.
+                then you can develop complete 10-section profiles with visual studies for any or all of them.
               </p>
             </div>
 
@@ -780,10 +902,10 @@ export default function HomePage() {
                     </h4>
                     <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
                       <li>AI scans your text and identifies all locations</li>
-                      <li>You pick which location to develop</li>
-                      <li>A full 10-section profile is generated</li>
-                      <li>A 6-panel visual study is created</li>
-                      <li>Download everything as a Word document</li>
+                      <li>All locations appear on a dashboard grid</li>
+                      <li>Develop any location into a full 10-section profile</li>
+                      <li>Generate 6-panel visual studies per location</li>
+                      <li>Export individual or all locations as Word documents</li>
                     </ol>
                   </div>
 
@@ -814,56 +936,203 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* ── STEP: Select Location ── */}
-        {step === "select-location" && (
-          <div className="max-w-2xl mx-auto space-y-6">
-            <div className="text-center space-y-2">
-              <h2 className="font-serif font-bold text-xl">Locations Found</h2>
-              <p className="text-muted-foreground text-sm">
-                {detectedLocations.length} location{detectedLocations.length !== 1 ? "s" : ""} detected.
-                Select one to build a full profile.
-              </p>
+        {/* ── STEP: Dashboard ── */}
+        {step === "dashboard" && (
+          <div className="space-y-6">
+            {/* Dashboard Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="font-serif font-bold text-xl flex items-center gap-2">
+                  <LayoutGrid className="w-5 h-5 text-primary" />
+                  Location Dashboard
+                </h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {totalCount} location{totalCount !== 1 ? "s" : ""} detected
+                  {" · "}
+                  <span className={developedCount > 0 ? "text-green-600 dark:text-green-400 font-medium" : ""}>
+                    {developedCount} of {totalCount} developed
+                  </span>
+                </p>
+              </div>
+              <div className="flex gap-2 shrink-0 flex-wrap">
+                {developedCount > 0 && (
+                  <Button
+                    onClick={handleExportAll}
+                    disabled={isExportingAll}
+                    variant="secondary"
+                    size="sm"
+                    data-testid="button-export-all"
+                  >
+                    {isExportingAll ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Package className="w-3.5 h-3.5 mr-1.5" />
+                    )}
+                    Export All ({developedCount})
+                  </Button>
+                )}
+                {developedCount < totalCount && (
+                  <Button
+                    onClick={handleDevelopAll}
+                    disabled={isDevelopingAll || isAnalyzing}
+                    size="sm"
+                    data-testid="button-develop-all"
+                  >
+                    {isDevelopingAll ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+                    )}
+                    Develop All ({totalCount - developedCount})
+                  </Button>
+                )}
+              </div>
             </div>
 
-            <div className="space-y-3">
-              {detectedLocations.map((loc, i) => (
-                <Card
-                  key={i}
-                  className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30"
-                  onClick={() => handleLocationSelect(loc.name)}
-                  data-testid={`card-location-${i}`}
+            {/* Progress bar */}
+            {totalCount > 0 && (
+              <div className="space-y-1.5">
+                <Progress value={(developedCount / totalCount) * 100} className="h-2" data-testid="progress-developed" />
+                <p className="text-[11px] text-muted-foreground text-right">
+                  {developedCount}/{totalCount} profiles complete
+                </p>
+              </div>
+            )}
+
+            {/* Filter/sort bar */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Filter:</span>
+                {["all", "major", "minor", "background"].map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setFilterImportance(f)}
+                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                      filterImportance === f
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-transparent text-muted-foreground border-border hover:border-primary/50 hover:text-foreground"
+                    }`}
+                    data-testid={`filter-${f}`}
+                  >
+                    {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Sort:</span>
+                <button
+                  onClick={() => setSortBy("importance")}
+                  className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                    sortBy === "importance"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-transparent text-muted-foreground border-border hover:border-primary/50"
+                  }`}
+                  data-testid="sort-importance"
                 >
-                  <CardContent className="flex items-center gap-4 p-4">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
-                        loc.estimatedImportance === "major"
-                          ? "bg-primary text-primary-foreground"
-                          : loc.estimatedImportance === "minor"
-                            ? "bg-muted text-foreground"
-                            : "bg-muted/50 text-muted-foreground"
-                      }`}
-                    >
-                      <MapPin className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-sm truncate">{loc.name}</h3>
-                        <Badge
-                          variant={loc.estimatedImportance === "major" ? "default" : "secondary"}
-                          className="text-[10px] shrink-0"
+                  Importance
+                </button>
+                <button
+                  onClick={() => setSortBy("name")}
+                  className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                    sortBy === "name"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-transparent text-muted-foreground border-border hover:border-primary/50"
+                  }`}
+                  data-testid="sort-name"
+                >
+                  Name
+                </button>
+              </div>
+            </div>
+
+            {/* Location Cards Grid */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredLocations.map((loc, i) => {
+                const isDeveloped = !!developedItems[loc.name];
+                const colors = IMPORTANCE_COLORS[loc.estimatedImportance] || IMPORTANCE_COLORS.background;
+                const firstLetter = loc.name.charAt(0).toUpperCase();
+                const isDevelopingThis = developingLocation === loc.name;
+
+                return (
+                  <Card
+                    key={loc.name}
+                    className={`transition-all ${
+                      isDeveloped
+                        ? "border-green-500/30 dark:border-green-400/20 shadow-sm"
+                        : "border-border"
+                    }`}
+                    data-testid={`card-location-${i}`}
+                  >
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-start gap-3">
+                        {/* Avatar */}
+                        <div
+                          className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${colors.bg} ${colors.text}`}
                         >
-                          {loc.role}
-                        </Badge>
-                        <Badge variant="outline" className="text-[10px] shrink-0">
-                          {loc.estimatedImportance}
-                        </Badge>
+                          {firstLetter}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h3 className="font-semibold text-sm truncate">{loc.name}</h3>
+                            {isDeveloped && (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-green-600 dark:text-green-400 shrink-0" />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <Badge
+                              variant={loc.estimatedImportance === "major" ? "default" : "secondary"}
+                              className="text-[10px] shrink-0"
+                            >
+                              {loc.role}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] shrink-0">
+                              {loc.estimatedImportance}
+                            </Badge>
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{loc.briefDescription}</p>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                  </CardContent>
-                </Card>
-              ))}
+
+                      <p className="text-xs text-muted-foreground line-clamp-2">{loc.briefDescription}</p>
+
+                      {/* Actions */}
+                      <div className="pt-1">
+                        {isDeveloped ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => handleView(loc.name)}
+                            data-testid={`button-view-${i}`}
+                          >
+                            <Eye className="w-3.5 h-3.5 mr-1.5" />
+                            View Profile
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            onClick={() => handleDevelop(loc.name)}
+                            disabled={isAnalyzing || isDevelopingAll}
+                            data-testid={`button-develop-${i}`}
+                          >
+                            {isDevelopingThis ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                Developing...
+                              </>
+                            ) : (
+                              <>
+                                <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+                                Develop
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
 
             <Button variant="ghost" onClick={() => setStep("upload")} data-testid="button-back-to-upload">
@@ -881,7 +1150,7 @@ export default function HomePage() {
             </div>
             <div className="space-y-2">
               <h2 className="font-serif font-bold text-xl">
-                Building Profile for {selectedLocation}
+                Building Profile for {developingLocation}
               </h2>
               <p className="text-sm text-muted-foreground">{analysisStage}</p>
             </div>
@@ -892,14 +1161,19 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* ── STEP: Results ── */}
-        {step === "results" && profile && (
+        {/* ── STEP: Results (Expanded View) ── */}
+        {step === "results" && currentProfile && expandedItem && (
           <div className="space-y-6">
             {/* Results Header */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
-                <h2 className="font-serif font-bold text-xl">{selectedLocation}</h2>
-                <p className="text-sm text-muted-foreground mt-0.5">{profile.logline}</p>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="w-8 h-8 shrink-0" onClick={handleBackToDashboard} data-testid="button-back-to-dashboard-inline">
+                    <ArrowLeft className="w-4 h-4" />
+                  </Button>
+                  <h2 className="font-serif font-bold text-xl">{expandedItem}</h2>
+                </div>
+                <p className="text-sm text-muted-foreground mt-0.5 ml-10">{currentProfile.logline}</p>
               </div>
               <div className="flex gap-2 shrink-0">
                 <Button onClick={handleExport} disabled={isExporting} data-testid="button-export-docx">
@@ -978,7 +1252,7 @@ export default function HomePage() {
                     Visual Location Study
                   </CardTitle>
                   <div className="flex items-center gap-2">
-                    {Object.keys(visualImages).length > 0 && (
+                    {Object.keys(currentVisualImages).length > 0 && (
                       <Button
                         variant="secondary"
                         size="sm"
@@ -998,7 +1272,7 @@ export default function HomePage() {
                         data-testid="button-generate-all"
                       >
                         <Wand2 className="w-3.5 h-3.5 mr-1.5" />
-                        {visualImages["establishing"] ? "Generate Remaining" : "Generate All (Anchored)"}
+                        {currentVisualImages["establishing"] ? "Generate Remaining" : "Generate All (Anchored)"}
                       </Button>
                     )}
                   </div>
@@ -1010,7 +1284,19 @@ export default function HomePage() {
                     {ART_STYLES.map((style) => (
                       <button
                         key={style.id}
-                        onClick={() => { setArtStyle(style.id); setVisualImages({}); }}
+                        onClick={() => {
+                          setArtStyle(style.id);
+                          // Clear visual images for current expanded item
+                          if (expandedItem) {
+                            setDevelopedItems((prev) => ({
+                              ...prev,
+                              [expandedItem]: {
+                                ...prev[expandedItem],
+                                visualImages: {},
+                              },
+                            }));
+                          }
+                        }}
                         className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                           artStyle === style.id
                             ? "bg-primary text-primary-foreground border-primary"
@@ -1031,11 +1317,11 @@ export default function HomePage() {
               <CardContent>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {VISUAL_LAYERS.map((layer) => {
-                    const img = visualImages[layer.key];
+                    const img = currentVisualImages[layer.key];
                     const isCustom = layer.key === "custom";
                     const prompt = isCustom
                       ? (customPrompt ? `Same location (${selectedLocation}): ${customPrompt}` : "")
-                      : (profile[layer.profileKey] as string);
+                      : (currentProfile[layer.profileKey] as string);
                     const isGenerating = generatingLayer === layer.key;
                     return (
                       <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
@@ -1152,22 +1438,22 @@ export default function HomePage() {
                 <CardContent className="p-4 space-y-3">
                   <div>
                     <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Type</p>
-                    <p className="text-sm">{profile.type}</p>
+                    <p className="text-sm">{currentProfile.type}</p>
                   </div>
                   <Separator />
                   <div>
                     <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Scale</p>
-                    <p className="text-sm">{profile.scale}</p>
+                    <p className="text-sm">{currentProfile.scale}</p>
                   </div>
                   <Separator />
                   <div>
                     <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Time Period</p>
-                    <p className="text-sm">{profile.timePeriod}</p>
+                    <p className="text-sm">{currentProfile.timePeriod}</p>
                   </div>
                   <Separator />
                   <div>
                     <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Emotional Tone</p>
-                    <p className="text-sm">{profile.defaultEmotionalTone}</p>
+                    <p className="text-sm">{currentProfile.defaultEmotionalTone}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1197,7 +1483,7 @@ export default function HomePage() {
                         </h3>
                         <div className="space-y-3">
                           {section.fields.map((field) => {
-                            const value = (profile as any)[field.key] || "—";
+                            const value = (currentProfile as any)[field.key] || "—";
                             return (
                               <div key={field.key}>
                                 <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-0.5">

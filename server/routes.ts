@@ -687,6 +687,344 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Export all developed locations as combined DOCX
+  app.post("/api/export-all-docx", async (req: Request, res: Response) => {
+    try {
+      const { items } = req.body;
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "At least one developed location is required" });
+      }
+
+      // Build a combined document with page breaks between locations
+      const allChildren: any[] = [
+        // Master title
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: "LOCATION DEVELOPMENT BIBLE",
+              bold: true,
+              size: 40,
+              font: "Calibri",
+              color: "1a1a2e",
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 150 },
+        }),
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `${items.length} Location${items.length !== 1 ? "s" : ""} Developed`,
+              size: 26,
+              font: "Calibri",
+              color: "666666",
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 100 },
+        }),
+      ];
+
+      // Table of contents
+      allChildren.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: "TABLE OF CONTENTS",
+              bold: true,
+              size: 28,
+              font: "Calibri",
+              color: "1a1a2e",
+            }),
+          ],
+          spacing: { before: 300, after: 200 },
+          border: {
+            bottom: { style: BorderStyle.SINGLE, size: 1, color: "cccccc" },
+          },
+        })
+      );
+
+      items.forEach((item: any, idx: number) => {
+        allChildren.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `${idx + 1}. ${item.name}`,
+                size: 24,
+                font: "Calibri",
+              }),
+              new TextRun({
+                text: ` — ${item.profile?.logline?.substring(0, 80) || ""}${(item.profile?.logline?.length || 0) > 80 ? "..." : ""}`,
+                size: 22,
+                font: "Calibri",
+                color: "888888",
+                italics: true,
+              }),
+            ],
+            spacing: { after: 80 },
+          })
+        );
+      });
+
+      // Add page break before first location
+      allChildren.push(
+        new Paragraph({
+          children: [],
+          pageBreakBefore: true,
+        })
+      );
+
+      // Generate each location's content
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const profile = item.profile as LocationProfile;
+
+        // Convert images
+        const imageBuffers: Record<string, Buffer> = {};
+        if (item.images) {
+          for (const [key, b64] of Object.entries(item.images)) {
+            if (b64 && typeof b64 === "string") {
+              imageBuffers[key] = Buffer.from(b64, "base64");
+            }
+          }
+        }
+
+        // Location divider
+        if (i > 0) {
+          allChildren.push(
+            new Paragraph({
+              children: [],
+              pageBreakBefore: true,
+            })
+          );
+        }
+
+        // Location header
+        allChildren.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `LOCATION ${i + 1} OF ${items.length}`,
+                size: 20,
+                font: "Calibri",
+                color: "999999",
+              }),
+            ],
+            spacing: { after: 50 },
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: item.name || "Unknown Location",
+                bold: true,
+                size: 36,
+                font: "Calibri",
+                color: "1a1a2e",
+              }),
+            ],
+            spacing: { after: 100 },
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: profile.logline || "",
+                size: 24,
+                font: "Calibri",
+                color: "2d6a4f",
+                italics: true,
+              }),
+            ],
+            spacing: { after: 300 },
+          })
+        );
+
+        // Helper functions (same as single export)
+        const sectionHeader = (text: string, num: number) =>
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `SECTION ${num}  ·  ${text}`,
+                bold: true,
+                size: 28,
+                font: "Calibri",
+                color: "1a1a2e",
+              }),
+            ],
+            spacing: { before: 400, after: 200 },
+            border: {
+              bottom: { style: BorderStyle.SINGLE, size: 1, color: "cccccc" },
+            },
+          });
+
+        const fieldParagraph = (label: string, value: string) =>
+          new Paragraph({
+            children: [
+              new TextRun({ text: `${label}: `, bold: true, size: 22, font: "Calibri" }),
+              new TextRun({ text: value || "—", size: 22, font: "Calibri" }),
+            ],
+            spacing: { after: 120 },
+          });
+
+        const emptyLine = () => new Paragraph({ spacing: { after: 100 } });
+
+        // Visual Study Images
+        if (Object.keys(imageBuffers).length > 0) {
+          allChildren.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: "VISUAL LOCATION STUDY",
+                  bold: true,
+                  size: 28,
+                  font: "Calibri",
+                  color: "1a1a2e",
+                }),
+              ],
+              spacing: { before: 200, after: 200 },
+              border: {
+                bottom: { style: BorderStyle.SINGLE, size: 1, color: "cccccc" },
+              },
+            })
+          );
+
+          for (const [key, label] of Object.entries(VISUAL_LAYER_NAMES)) {
+            const buf = imageBuffers[key];
+            if (buf) {
+              allChildren.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: label,
+                      bold: true,
+                      size: 24,
+                      font: "Calibri",
+                      color: "2d6a4f",
+                    }),
+                  ],
+                  spacing: { before: 300, after: 150 },
+                }),
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: buf,
+                      transformation: { width: 500, height: 500 },
+                      type: "png",
+                    }),
+                  ],
+                  alignment: AlignmentType.CENTER,
+                  spacing: { after: 200 },
+                })
+              );
+            }
+          }
+          allChildren.push(emptyLine());
+        }
+
+        // All 10 sections
+        allChildren.push(
+          sectionHeader("LOCATION IDENTITY", 1),
+          fieldParagraph("Logline", profile.logline),
+          fieldParagraph("Type", profile.type),
+          fieldParagraph("Scale", profile.scale),
+          fieldParagraph("Time Period", profile.timePeriod),
+          fieldParagraph("Alternate Names", profile.alternateNames),
+          emptyLine(),
+
+          sectionHeader("GEOGRAPHY & PHYSICAL LAYOUT", 2),
+          fieldParagraph("Region", profile.region),
+          fieldParagraph("Terrain", profile.terrain),
+          fieldParagraph("Climate", profile.climate),
+          fieldParagraph("Elevation", profile.elevation),
+          fieldParagraph("Layout Description", profile.layoutDescription),
+          fieldParagraph("Entry / Exit Points", profile.entryExitPoints),
+          fieldParagraph("Surrounding Environment", profile.surroundingEnvironment),
+          fieldParagraph("Nearest Landmarks", profile.nearestLandmarks),
+          fieldParagraph("Travel Routes", profile.travelRoutes),
+          emptyLine(),
+
+          sectionHeader("HISTORY & TIMELINE", 3),
+          fieldParagraph("Origin / Founding", profile.originFounding),
+          fieldParagraph("Key Historical Events", profile.keyHistoricalEvents),
+          fieldParagraph("Previous Uses", profile.previousUses),
+          fieldParagraph("Who Built It & Why", profile.whoBuiltItAndWhy),
+          fieldParagraph("Current State vs Original", profile.currentStateVsOriginal),
+          fieldParagraph("Echoing Events", profile.echoingEvents),
+          emptyLine(),
+
+          sectionHeader("SENSORY PROFILE", 4),
+          fieldParagraph("Default Sounds", profile.defaultSounds),
+          fieldParagraph("Smells", profile.smells),
+          fieldParagraph("Light Quality", profile.lightQuality),
+          fieldParagraph("Temperature / Air Quality", profile.temperatureAirQuality),
+          fieldParagraph("Tactile Surfaces", profile.tactileSurfaces),
+          fieldParagraph("Time of Day Variations", profile.timeOfDayVariations),
+          emptyLine(),
+
+          sectionHeader("MOOD & EMOTIONAL ATMOSPHERE", 5),
+          fieldParagraph("Default Emotional Tone", profile.defaultEmotionalTone),
+          fieldParagraph("Psychological Effect", profile.psychologicalEffect),
+          fieldParagraph("Protagonist Feeling", profile.protagonistFeeling),
+          fieldParagraph("Appears vs Reality", profile.appearsVsReality),
+          fieldParagraph("The Location's Lie", profile.locationLie),
+          emptyLine(),
+
+          sectionHeader("INHABITANTS & SOCIAL STRUCTURE", 6),
+          fieldParagraph("Who Lives / Works Here", profile.whoLivesWorksHere),
+          fieldParagraph("Power Hierarchy", profile.powerHierarchy),
+          fieldParagraph("Written / Unwritten Rules", profile.writtenUnwrittenRules),
+          fieldParagraph("Territorial Boundaries", profile.territorialBoundaries),
+          fieldParagraph("Newcomer Treatment", profile.newcomerTreatment),
+          fieldParagraph("Access Control", profile.accessControl),
+          emptyLine(),
+
+          sectionHeader("NARRATIVE FUNCTION & CONFLICT", 7),
+          fieldParagraph("Story Events Here", profile.storyEventsHere),
+          fieldParagraph("Secrets", profile.secrets),
+          fieldParagraph("Built-In Dangers", profile.builtInDangers),
+          fieldParagraph("Escape Routes / Traps", profile.escapeRoutesTraps),
+          fieldParagraph("Character Constraints", profile.characterConstraints),
+          emptyLine(),
+
+          sectionHeader("LOCATION ARC", 8),
+          fieldParagraph("State at Opening", profile.stateAtOpening),
+          fieldParagraph("State at Climax", profile.stateAtClimax),
+          fieldParagraph("State at Resolution", profile.stateAtResolution),
+          fieldParagraph("Transformation Cause", profile.transformationCause),
+          fieldParagraph("Transformation Statement", profile.transformationStatement),
+          emptyLine(),
+
+          sectionHeader("THEME & SYMBOLISM", 9),
+          fieldParagraph("Thematic Representation", profile.thematicRepresentation),
+          fieldParagraph("Recurring Motifs", profile.recurringMotifs),
+          fieldParagraph("Symbolic Objects", profile.symbolicObjects),
+          fieldParagraph("Color / Weather Associations", profile.colorWeatherAssociations),
+          fieldParagraph("Character Mirror", profile.characterMirror),
+          emptyLine(),
+
+          sectionHeader("TECHNICAL & PRODUCTION NOTES", 10),
+          fieldParagraph("Key Props", profile.keyProps),
+          fieldParagraph("Practical Considerations", profile.practicalConsiderations),
+          fieldParagraph("Real-World References", profile.realWorldReferences),
+          fieldParagraph("Camera Angle Suggestions", profile.cameraAngleSuggestions),
+          fieldParagraph("VFX Notes", profile.vfxNotes)
+        );
+      }
+
+      const doc = new Document({
+        sections: [{ children: allChildren }],
+      });
+
+      const buffer = await Packer.toBuffer(doc);
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `attachment; filename="All_Location_Profiles.docx"`);
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("Export all DOCX error:", err);
+      return res.status(422).json({ error: err.message });
+    }
+  });
+
   // Get saved locations for this visitor
   app.get("/api/locations", (req: Request, res: Response) => {
     const visitorId = req.headers["x-visitor-id"] as string || "anonymous";

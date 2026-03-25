@@ -6,6 +6,10 @@ import { createServer } from "http";
 const app = express();
 const httpServer = createServer(app);
 
+// Increase timeout for long AI calls (5 minutes)
+httpServer.timeout = 300000;
+httpServer.keepAliveTimeout = 300000;
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
