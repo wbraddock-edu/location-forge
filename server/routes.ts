@@ -155,7 +155,7 @@ async function callImageAI(
     if (hasRefs) {
       const refCount = referenceImages.length;
       parts.push({
-        text: `Using these ${refCount} location reference image${refCount > 1 ? "s" : ""} as the visual anchor for consistency (maintain the EXACT same architecture, materials, color palette, lighting style, and environmental details across all outputs), generate: ${prompt}`,
+        text: `CRITICAL: Output exactly ONE single image. Do NOT create a collage, grid, triptych, side-by-side comparison, or multi-panel layout. Generate ONE continuous scene filling the entire frame. Using these ${refCount} reference image${refCount > 1 ? "s" : ""} as the visual anchor (maintain the EXACT same architecture, materials, color palette, and environmental details), generate: ${prompt}`,
       });
       for (const refImg of referenceImages) {
         parts.push({
@@ -166,7 +166,7 @@ async function callImageAI(
         });
       }
     } else {
-      parts.push({ text: `Generate an image: ${prompt}` });
+      parts.push({ text: `CRITICAL: Output exactly ONE single image. Do NOT create a collage, grid, triptych, side-by-side comparison, or multi-panel layout. Generate ONE continuous scene filling the entire frame. ${prompt}` });
     }
 
     const res = await fetch(

@@ -51,6 +51,12 @@ import {
   Crown,
   Zap,
   Clock,
+  Camera,
+  Cloud,
+  Film,
+  Ruler,
+  Heart,
+  Clapperboard,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -289,6 +295,7 @@ export default function HomePage() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisStage, setAnalysisStage] = useState("");
   const [activeSection, setActiveSection] = useState("1");
+  const [visualTab, setVisualTab] = useState("camera");
 
   // Dashboard filters
   const [filterImportance, setFilterImportance] = useState<string>("all");
@@ -301,65 +308,64 @@ export default function HomePage() {
   const currentVisualImages = expandedItem ? developedItems[expandedItem]?.visualImages ?? {} : {};
   const selectedLocation = expandedItem || "";
 
-  // Visual study layer definitions — expanded panel system for locations
-  // Core panels (21) auto-generate, Optional panels (20+) available on demand
+  // Visual study layer definitions — organized by production category
   const VISUAL_LAYERS = [
-    // ── Foundation (Core 1-6: Original panels) ──
-    { key: "establishing", title: "Establishing Shot", subtitle: "Scope Layer", isCore: true, profileKey: "visualEstablishing" as keyof LocationProfile, description: "Wide aerial view, full environment scope, hero shot" },
-    { key: "architectural", title: "Architectural Detail", subtitle: "Structure Layer", isCore: true, profileKey: "visualArchitectural" as keyof LocationProfile, description: "Materials, textures, construction details, close-up" },
-    { key: "interior", title: "Interior Focal Point", subtitle: "Heart Layer", isCore: true, profileKey: "visualInterior" as keyof LocationProfile, description: "The most important space within this location" },
-    { key: "lighting", title: "Lighting Default", subtitle: "Mood Layer", isCore: true, profileKey: "visualLighting" as keyof LocationProfile, description: "Default lighting conditions, primary atmosphere" },
-    { key: "storytelling", title: "Environmental Storytelling", subtitle: "History Layer", isCore: true, profileKey: "visualStorytelling" as keyof LocationProfile, description: "Objects, wear, signs of life or decay that tell the story" },
-    { key: "custom", title: "Director Shot", subtitle: "Custom", isCore: true, profileKey: "" as keyof LocationProfile, description: "Custom scene — any angle, time, weather, event" },
+    // ── Tab 1: Camera Shots ──
+    { key: "establishing", title: "Establishing Shot", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "visualEstablishing" as keyof LocationProfile, description: "Extreme wide shot, full environment context, hero composition showing the complete location. Single continuous frame." },
+    { key: "wideShot", title: "Wide Shot", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Full wide angle showing the entire location with environmental context. Single continuous frame, eye level." },
+    { key: "mediumShot", title: "Medium Shot", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Mid-range framing isolating the key architectural or spatial feature. Single frame, standard lens perspective." },
+    { key: "closeUp", title: "Close-Up", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Extreme close-up of one defining detail: a surface texture, a door handle, an inscription, weathering pattern. Macro photography perspective. Single tight frame." },
+    { key: "overTheShoulder", title: "Over-the-Shoulder POV", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Camera positioned behind and slightly above a character's shoulder entering or observing this location. Single frame, shallow depth of field on the location." },
+    { key: "lowAngle", title: "Low Angle (Worm's Eye)", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Camera near ground level looking up, emphasizing the height, power, and scale of the location. Single dramatic frame." },
+    { key: "highAngle", title: "High Angle (Bird's Eye)", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Camera positioned high above looking down at the location layout, showing spatial relationships, pathways, and ground patterns. Single overhead frame." },
+    { key: "dutchAngle", title: "Dutch Angle", subtitle: "Camera Shots", category: "camera", isCore: true, profileKey: "" as keyof LocationProfile, description: "Tilted camera angle creating unease and tension, showing the location at a dramatic diagonal. Single canted frame." },
 
-    // ── Angles & Coverage (Core 7-12) ──
-    { key: "wideShot", title: "Wide Shot", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Full wide shot showing the entire location in context" },
-    { key: "mediumShot", title: "Medium Shot", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Medium framing showing key area with surrounding context" },
-    { key: "closeUp", title: "Close-Up Detail", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Extreme close-up of a defining detail, texture, or object" },
-    { key: "aerialView", title: "Aerial View", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Bird's eye view showing layout, paths, and spatial relationships" },
-    { key: "groundLevel", title: "Ground Level POV", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Eye-level perspective as a character would see it entering" },
-    { key: "reverseAngle", title: "Reverse Angle", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Looking back from the opposite direction of the establishing shot" },
+    // ── Tab 2: Lighting & Time ──
+    { key: "goldenHour", title: "Golden Hour", subtitle: "Lighting & Time", category: "lighting", isCore: true, profileKey: "visualLighting" as keyof LocationProfile, description: "Early morning or late afternoon warm golden light, long shadows, rich amber tones. Single frame." },
+    { key: "blueHour", title: "Blue Hour", subtitle: "Lighting & Time", category: "lighting", isCore: true, profileKey: "" as keyof LocationProfile, description: "Twilight, cool blue ambient light before sunrise or after sunset. Single frame." },
+    { key: "midday", title: "Harsh Midday", subtitle: "Lighting & Time", category: "lighting", isCore: true, profileKey: "" as keyof LocationProfile, description: "Direct overhead sun, hard shadows, high contrast, bleached highlights. Single frame." },
+    { key: "night", title: "Night", subtitle: "Lighting & Time", category: "lighting", isCore: true, profileKey: "" as keyof LocationProfile, description: "Nighttime with available light only: moonlight, streetlamps, neon, firelight. Single frame." },
+    { key: "backlit", title: "Backlit / Silhouette", subtitle: "Lighting & Time", category: "lighting", isCore: true, profileKey: "" as keyof LocationProfile, description: "Strong light source behind the main subject of the location creating rim lighting and silhouette. Single frame." },
+    { key: "practicalLighting", title: "Practical Lighting Only", subtitle: "Lighting & Time", category: "lighting", isCore: true, profileKey: "" as keyof LocationProfile, description: "Lit solely by in-scene sources: candles, screens, dashboard lights, fire. No sunlight. Single frame." },
 
-    // ── Time of Day (Core 13-16) ──
-    { key: "dawn", title: "Dawn", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Early morning golden hour light, soft warm glow, long shadows" },
-    { key: "midday", title: "Midday", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Harsh overhead sunlight, strong contrast, minimal shadows" },
-    { key: "sunset", title: "Sunset", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Golden hour warm light, dramatic long shadows, rich colors" },
-    { key: "night", title: "Night", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Nighttime with available light sources, moonlight, artificial light" },
+    // ── Tab 3: Weather & Atmosphere ──
+    { key: "clearDay", title: "Clear Day", subtitle: "Weather & Atmosphere", category: "weather", isCore: false, profileKey: "" as keyof LocationProfile, description: "Bright sunshine, blue sky, crisp visibility, clean atmosphere. Single frame." },
+    { key: "overcast", title: "Overcast / Flat Light", subtitle: "Weather & Atmosphere", category: "weather", isCore: false, profileKey: "" as keyof LocationProfile, description: "Heavy cloud cover, diffused shadowless light, muted desaturated palette. Single frame." },
+    { key: "rain", title: "Rain", subtitle: "Weather & Atmosphere", category: "weather", isCore: false, profileKey: "" as keyof LocationProfile, description: "Active rainfall, wet reflective surfaces, puddles, streaked windows, grey sky. Single frame." },
+    { key: "fog", title: "Fog / Mist", subtitle: "Weather & Atmosphere", category: "weather", isCore: false, profileKey: "" as keyof LocationProfile, description: "Dense atmospheric haze, reduced visibility, silhouetted shapes emerging from mist. Single frame." },
+    { key: "storm", title: "Storm", subtitle: "Weather & Atmosphere", category: "weather", isCore: false, profileKey: "" as keyof LocationProfile, description: "Dramatic storm: dark roiling clouds, lightning, violent wind, debris. Single frame." },
+    { key: "snow", title: "Snow", subtitle: "Weather & Atmosphere", category: "weather", isCore: false, profileKey: "" as keyof LocationProfile, description: "Snow covering the location, muted white palette, cold blue shadows, visible breath. Single frame." },
 
-    // ── Weather & Atmosphere (Core 17-21) ──
-    { key: "clearDay", title: "Clear Day", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Bright clear sky, optimal visibility, clean atmosphere" },
-    { key: "overcast", title: "Overcast", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Heavy cloud cover, flat diffused light, muted colors" },
-    { key: "rain", title: "Rain", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Rain falling, wet surfaces, reflections, puddles" },
-    { key: "fog", title: "Fog", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Dense fog or mist, reduced visibility, atmospheric depth" },
-    { key: "storm", title: "Storm", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Dramatic storm conditions, dark clouds, lightning, wind" },
+    // ── Tab 4: Production Design ──
+    { key: "architectural", title: "Architectural Detail", subtitle: "Production Design", category: "production", isCore: false, profileKey: "visualArchitectural" as keyof LocationProfile, description: "Close study of ONE key architectural element: a doorway, window, column, beam, wall joint. Construction materials and craftsmanship visible. Single tight frame." },
+    { key: "interiorFocal", title: "Interior Focal Point", subtitle: "Production Design", category: "production", isCore: false, profileKey: "visualInterior" as keyof LocationProfile, description: "The single most important interior space or room, showing furniture, props, and spatial depth. Single frame." },
+    { key: "entryApproach", title: "Entry / Approach", subtitle: "Production Design", category: "production", isCore: false, profileKey: "" as keyof LocationProfile, description: "How a character first sees and approaches this location. The arrival perspective. Single frame." },
+    { key: "keyProp", title: "Key Prop in Situ", subtitle: "Production Design", category: "production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The single most narratively important object or prop shown in its natural position within the location. Single frame." },
+    { key: "signageMarkings", title: "Signage & Markings", subtitle: "Production Design", category: "production", isCore: false, profileKey: "" as keyof LocationProfile, description: "Close-up of any signs, symbols, graffiti, labels, addresses, or identifying marks on the location. Single frame." },
+    { key: "floorplan", title: "Overhead Layout", subtitle: "Production Design", category: "production", isCore: false, profileKey: "" as keyof LocationProfile, description: "Bird's-eye architectural layout view showing room arrangement, corridors, doors, and spatial flow. Single frame." },
 
-    // ── Seasonal Variations (Optional) ──
-    { key: "spring", title: "Spring", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Spring growth, fresh green, blooming, bright light" },
-    { key: "summer", title: "Summer", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Peak summer, lush vegetation, warm saturated colors" },
-    { key: "autumn", title: "Autumn", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Fall colors, warm oranges and reds, leaves, harvest light" },
-    { key: "winter", title: "Winter", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Winter conditions, snow, bare trees, cold blue tones" },
+    // ── Tab 5: Mood & Narrative ──
+    { key: "empty", title: "Empty / Abandoned", subtitle: "Mood & Narrative", category: "mood", isCore: false, profileKey: "visualStorytelling" as keyof LocationProfile, description: "The location completely devoid of people, emphasizing loneliness, silence, and the space itself. Single frame." },
+    { key: "populated", title: "Populated / Active", subtitle: "Mood & Narrative", category: "mood", isCore: false, profileKey: "" as keyof LocationProfile, description: "The location alive with activity, people, movement, noise, energy. Single frame." },
+    { key: "aftermath", title: "Aftermath", subtitle: "Mood & Narrative", category: "mood", isCore: false, profileKey: "" as keyof LocationProfile, description: "The location after a significant event: damage, debris, overturned objects, scorch marks, flooding. Single frame." },
+    { key: "hidden", title: "Hidden Area / Secret", subtitle: "Mood & Narrative", category: "mood", isCore: false, profileKey: "" as keyof LocationProfile, description: "A concealed or restricted part of the location: behind a wall panel, under the floor, inside a vent. Single frame." },
+    { key: "dangerZone", title: "Danger Zone", subtitle: "Mood & Narrative", category: "mood", isCore: false, profileKey: "" as keyof LocationProfile, description: "The most dangerous area: structural damage, toxic spill, exposed wiring, unstable ground. Single frame." },
+    { key: "safeHaven", title: "Safe Haven", subtitle: "Mood & Narrative", category: "mood", isCore: false, profileKey: "" as keyof LocationProfile, description: "The safest, most protected area: a locked room, a bunker, a warm corner. Single frame." },
 
-    // ── Narrative Moments (Optional) ──
-    { key: "empty", title: "Empty", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "Location completely empty, no characters, abandoned feeling" },
-    { key: "populated", title: "Populated", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "Location busy with activity, characters present, alive" },
-    { key: "aftermath", title: "Aftermath", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "After a major event, showing damage, debris, consequences" },
-    { key: "discovery", title: "Discovery Moment", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "The moment a character first discovers this location" },
-    { key: "conflict", title: "Conflict Scene", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "During the key conflict or dramatic event at this location" },
-    { key: "resolution", title: "Resolution", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "Location at the story resolution, transformed by events" },
+    // ── Tab 6: Director's Vision ──
+    { key: "custom", title: "Director Shot", subtitle: "Director's Vision", category: "director", isCore: false, profileKey: "visualCustom" as keyof LocationProfile, description: "Custom scene — any angle, time, weather, event (text input)" },
+    { key: "emergency", title: "Emergency Condition", subtitle: "Director's Vision", category: "director", isCore: false, profileKey: "" as keyof LocationProfile, description: "Red alert: emergency lighting, alarms blaring, flashing strobes, evacuation signs illuminated. Single frame." },
+    { key: "powerFailure", title: "Power Failure", subtitle: "Director's Vision", category: "director", isCore: false, profileKey: "" as keyof LocationProfile, description: "Complete darkness except emergency backup: battery LED strips, phone flashlights, sparking wires. Single frame." },
+    { key: "decayed", title: "Decades Later", subtitle: "Director's Vision", category: "director", isCore: false, profileKey: "" as keyof LocationProfile, description: "This same location decades into the future: overgrown, crumbling, nature reclaiming, dust and rust. Single frame." },
+  ];
 
-    // ── Production Angles (Optional) ──
-    { key: "entryPoint", title: "Entry Point", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The main entrance or approach, how characters arrive" },
-    { key: "exitPoint", title: "Exit Point", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The exit or departure view, leaving perspective" },
-    { key: "hiddenArea", title: "Hidden Area", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "Secret or concealed space within the location" },
-    { key: "dangerZone", title: "Danger Zone", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The most dangerous area or threat point" },
-    { key: "safeHaven", title: "Safe Haven", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The safest area, refuge point, or comfort zone" },
-    { key: "transitionSpace", title: "Transition Space", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "Hallway, corridor, path connecting to other locations" },
-
-    // ── Special Conditions (Optional) ──
-    { key: "emergency", title: "Emergency", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "Emergency conditions, red alert lighting, alarms, chaos" },
-    { key: "powerOut", title: "Power Failure", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "No power, emergency backup only, dark with scattered light" },
-    { key: "celebration", title: "Celebration", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "Decorated for celebration, festive, warm inviting atmosphere" },
-    { key: "abandoned", title: "Abandoned", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "Long abandoned, overgrown, deteriorated, time has passed" },
+  const PANEL_CATEGORIES = [
+    { id: "camera", label: "Camera Shots", Icon: Camera },
+    { id: "lighting", label: "Lighting & Time", Icon: Sun },
+    { id: "weather", label: "Weather & Atmosphere", Icon: Cloud },
+    { id: "production", label: "Production Design", Icon: Ruler },
+    { id: "mood", label: "Mood & Narrative", Icon: Heart },
+    { id: "director", label: "Director's Vision", Icon: Clapperboard },
   ];
 
   // Handle file upload (DOCX or TXT)
@@ -624,9 +630,9 @@ export default function HomePage() {
   const currentStylePrompt = ART_STYLES.find((s) => s.id === artStyle)?.prompt || "";
 
   // Show prompt for Midjourney
+  // Note: prompt passed here already includes style lock from buildLayerPrompt
   const handleCopyPrompt = (layerKey: string, layerTitle: string, prompt: string) => {
-    const fullPrompt = `${currentStylePrompt}. ${prompt}`;
-    setShowPromptDialog({ layerKey, title: layerTitle, prompt: fullPrompt });
+    setShowPromptDialog({ layerKey, title: layerTitle, prompt: prompt || "(No prompt — generate a profile first)" });
   };
 
   // Download a single image
@@ -752,10 +758,17 @@ export default function HomePage() {
     const climate = profile.climate || "";
     const terrain = profile.terrain || "";
     const mood = (profile as any).defaultEmotionalTone || "";
-    
-    // Use profile-specific prompt if available
+
+    // Custom layer uses the user's typed customPrompt
+    if (layer.key === "custom") {
+      if (!customPrompt) return "";
+      const ctxBase = `Same location (${name}): ${customPrompt}`;
+      return `CRITICAL: Generate exactly ONE single image. ONE location. ONE viewpoint. This is NOT a collage, NOT a grid, NOT multiple panels, NOT side-by-side. Just ONE standalone image filling the entire frame. ${currentStylePrompt}. ${ctxBase}`;
+    }
+
+    // Use profile-specific prompt if available (non-empty profileKey)
     const profilePrompt = layer.profileKey ? (profile[layer.profileKey] as string) : "";
-    const basePrompt = profilePrompt || layer.description;
+    const basePrompt = (profilePrompt && profilePrompt !== "—" && profilePrompt.length > 5) ? profilePrompt : layer.description;
     
     let locationContext = `Location: ${name}`;
     if (layoutDesc) locationContext += `. ${layoutDesc}`;
@@ -766,27 +779,31 @@ export default function HomePage() {
     return `CRITICAL: Generate exactly ONE single image. ONE location. ONE viewpoint. This is NOT a collage, NOT a grid, NOT multiple panels, NOT side-by-side. Just ONE standalone image filling the entire frame. ${currentStylePrompt}. ${locationContext}. ${basePrompt}`;
   };
 
-  // Generate all CORE visual layers sequentially with rate-limit delays
+  // Generate all layers in the current visual tab sequentially with rate-limit delays
   const handleGenerateAll = async () => {
     if (!currentProfile || demoMode || !expandedItem) return;
-    const coreLayers = VISUAL_LAYERS.filter(l => l.isCore && l.key !== "custom");
+    const tabLayers = VISUAL_LAYERS.filter(l => l.category === visualTab && l.key !== "custom");
     
-    // Step 1: Generate the establishing shot (anchor) first
+    // Step 1: Use or generate the establishing shot (anchor) first if not present
     let anchorImage = currentVisualImages["establishing"];
     if (!anchorImage) {
-      const prompt = buildLayerPrompt(VISUAL_LAYERS[0], currentProfile);
-      anchorImage = await handleGenerateVisual("establishing", prompt) || undefined;
-      await delay(8000);
+      const establishingLayer = VISUAL_LAYERS.find(l => l.key === "establishing");
+      if (establishingLayer) {
+        const prompt = buildLayerPrompt(establishingLayer, currentProfile);
+        anchorImage = await handleGenerateVisual("establishing", prompt) || undefined;
+        await delay(8000);
+      }
     }
     
-    // Step 2: Generate remaining core layers using the anchor
-    for (let i = 0; i < coreLayers.length; i++) {
-      const layer = coreLayers[i];
-      if (layer.key === "establishing") continue;
+    // Step 2: Generate layers in current tab
+    for (let i = 0; i < tabLayers.length; i++) {
+      const layer = tabLayers[i];
+      if (layer.key === "establishing" && anchorImage) continue;
       if (currentVisualImages[layer.key]) continue;
       const prompt = buildLayerPrompt(layer, currentProfile);
+      if (!prompt) continue;
       await handleGenerateVisual(layer.key, prompt, anchorImage);
-      if (i < coreLayers.length - 1) {
+      if (i < tabLayers.length - 1) {
         await delay(8000);
       }
     }
@@ -2097,7 +2114,7 @@ export default function HomePage() {
                         data-testid="button-generate-all"
                       >
                         <Wand2 className="w-3.5 h-3.5 mr-1.5" />
-                        {currentVisualImages["establishing"] ? "Generate Remaining" : "Generate All (Anchored)"}
+                        Generate Tab ({PANEL_CATEGORIES.find(c => c.id === visualTab)?.label ?? ""})
                       </Button>
                     )}
                   </div>
@@ -2139,125 +2156,171 @@ export default function HomePage() {
                   {demoMode && " Connect an API key to generate images."}
                 </p>
               </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {VISUAL_LAYERS.map((layer) => {
-                    const img = currentVisualImages[layer.key];
-                    const isCustom = layer.key === "custom";
-                    const prompt = isCustom
-                      ? (customPrompt ? `Same location (${selectedLocation}): ${customPrompt}` : "")
-                      : (currentProfile[layer.profileKey] as string);
-                    const isGenerating = generatingLayer === layer.key;
-                    return (
-                      <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
-                        {img ? (
-                          <div className="relative w-full aspect-square">
-                            <img
-                              src={`data:image/png;base64,${img}`}
-                              alt={layer.title}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
-                              <p className="text-xs font-medium text-white/90">{layer.title}</p>
-                              <p className="text-[10px] text-white/60 uppercase tracking-wider">{layer.subtitle}</p>
+              <CardContent className="p-0">
+                {/* Category tab bar */}
+                <div className="border-b border-border overflow-x-auto">
+                  <div className="flex gap-0 min-w-max">
+                    {PANEL_CATEGORIES.map((cat) => {
+                      const catLayers = VISUAL_LAYERS.filter(l => l.category === cat.id);
+                      const generated = catLayers.filter(l => currentVisualImages[l.key]).length;
+                      const total = catLayers.length;
+                      const isActive = visualTab === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => setVisualTab(cat.id)}
+                          data-testid={`tab-visual-${cat.id}`}
+                          className={`flex items-center gap-1.5 px-3 py-2.5 text-xs border-b-2 transition-colors whitespace-nowrap ${
+                            isActive
+                              ? "border-primary text-foreground font-medium"
+                              : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                          }`}
+                        >
+                          <cat.Icon className="w-3.5 h-3.5" />
+                          <span>{cat.label}</span>
+                          {generated > 0 && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                              generated === total
+                                ? "bg-primary/20 text-primary"
+                                : "bg-muted text-muted-foreground"
+                            }`}>
+                              {generated}/{total}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Panel grid for active tab */}
+                <div className="p-4">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {VISUAL_LAYERS.filter(l => l.category === visualTab).map((layer) => {
+                      const img = currentVisualImages[layer.key];
+                      const isCustom = layer.key === "custom";
+                      const isGenerating = generatingLayer === layer.key;
+                      // Build the full prompt using buildLayerPrompt for consistent single-image enforcement
+                      const fullPrompt = currentProfile ? buildLayerPrompt(layer, currentProfile) : "";
+                      // For display in copy-prompt dialog, use the full prompt
+                      const displayPrompt = fullPrompt;
+                      return (
+                        <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
+                          {img ? (
+                            <div className="relative w-full aspect-square">
+                              <img
+                                src={`data:image/png;base64,${img}`}
+                                alt={layer.title}
+                                className="w-full h-full object-cover"
+                              />
+                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+                                <p className="text-xs font-medium text-white/90">{layer.title}</p>
+                                <p className="text-[10px] text-white/60 uppercase tracking-wider">{layer.subtitle}</p>
+                              </div>
                             </div>
-                          </div>
-                        ) : isCustom && !isGenerating ? (
-                          <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] p-3 flex flex-col">
-                            <Textarea
-                              placeholder="Describe the scene... e.g. 'aerial view during a thunderstorm at midnight, lightning illuminating the mountain, rain pouring down'"
-                              value={customPrompt}
-                              onChange={(e) => setCustomPrompt(e.target.value)}
-                              className="flex-1 text-xs resize-none bg-transparent border-border"
-                              data-testid="input-custom-prompt"
-                            />
-                          </div>
-                        ) : (
-                          <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] flex items-center justify-center">
-                            {isGenerating ? (
-                              <div className="text-center">
-                                <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-primary" />
-                                <p className="text-xs text-muted-foreground">Generating...</p>
-                              </div>
-                            ) : (
-                              <div className="text-center p-4">
-                                <Image className="w-6 h-6 mx-auto mb-2 opacity-30" />
-                                <p className="text-xs text-muted-foreground">{layer.description}</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <div className="p-3 border-t border-border">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <p className="text-sm font-semibold">{layer.title}</p>
-                                {layer.key === "establishing" && img && (
-                                  <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4">
-                                    ANCHOR
-                                  </Badge>
-                                )}
-                              </div>
-                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{layer.subtitle}</p>
+                          ) : isCustom && !isGenerating ? (
+                            <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] p-3 flex flex-col">
+                              <Textarea
+                                placeholder="Describe the scene... e.g. 'aerial view during a thunderstorm at midnight, lightning illuminating the mountain, rain pouring down'"
+                                value={customPrompt}
+                                onChange={(e) => setCustomPrompt(e.target.value)}
+                                className="flex-1 text-xs resize-none bg-transparent border-border"
+                                data-testid="input-custom-prompt"
+                              />
                             </div>
-                            <div className="flex items-center gap-0.5">
-                              {/* Copy prompt for Midjourney */}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="w-7 h-7"
-                                onClick={() => handleCopyPrompt(layer.key, layer.title, prompt)}
-                                title="Copy prompt for Midjourney"
-                                data-testid={`button-copy-${layer.key}`}
-                              >
-                                {copiedPrompt === layer.key ? (
-                                  <Check className="w-3.5 h-3.5 text-primary" />
-                                ) : (
-                                  <Copy className="w-3.5 h-3.5" />
-                                )}
-                              </Button>
-                              {/* Download image */}
-                              {img && (
+                          ) : (
+                            <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] flex items-center justify-center">
+                              {isGenerating ? (
+                                <div className="text-center">
+                                  <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-primary" />
+                                  <p className="text-xs text-muted-foreground">Generating...</p>
+                                </div>
+                              ) : (
+                                <div className="text-center p-4">
+                                  <Image className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                                  <p className="text-xs text-muted-foreground">{layer.description}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <div className="p-3 border-t border-border">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-sm font-semibold">{layer.title}</p>
+                                  {layer.key === "establishing" && img && (
+                                    <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4">
+                                      ANCHOR
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{layer.subtitle}</p>
+                              </div>
+                              <div className="flex items-center gap-0.5">
+                                {/* Copy prompt for Midjourney */}
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="w-7 h-7"
-                                  onClick={() => handleDownloadImage(layer.key, layer.title)}
-                                  title="Download image"
-                                  data-testid={`button-download-${layer.key}`}
+                                  onClick={() => handleCopyPrompt(layer.key, layer.title, displayPrompt)}
+                                  title="Copy prompt for Midjourney"
+                                  data-testid={`button-copy-${layer.key}`}
                                 >
-                                  <Download className="w-3.5 h-3.5" />
-                                </Button>
-                              )}
-                              {/* Generate */}
-                              {!demoMode && (
-                                <Button
-                                  variant={isCustom && customPrompt ? "default" : "ghost"}
-                                  size="icon"
-                                  className="w-7 h-7"
-                                  onClick={() => {
-                                    if (isCustom && !customPrompt) {
-                                      toast({ title: "Enter a description", description: "Type what you want to see in the text area above.", variant: "destructive" });
-                                      return;
-                                    }
-                                    handleGenerateVisual(layer.key, prompt);
-                                  }}
-                                  disabled={!!generatingLayer}
-                                  data-testid={`button-generate-${layer.key}`}
-                                >
-                                  {isGenerating ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  {copiedPrompt === layer.key ? (
+                                    <Check className="w-3.5 h-3.5 text-primary" />
                                   ) : (
-                                    <Wand2 className="w-3.5 h-3.5" />
+                                    <Copy className="w-3.5 h-3.5" />
                                   )}
                                 </Button>
-                              )}
+                                {/* Download image */}
+                                {img && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="w-7 h-7"
+                                    onClick={() => handleDownloadImage(layer.key, layer.title)}
+                                    title="Download image"
+                                    data-testid={`button-download-${layer.key}`}
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                                {/* Generate */}
+                                {!demoMode && (
+                                  <Button
+                                    variant={isCustom && customPrompt ? "default" : "ghost"}
+                                    size="icon"
+                                    className="w-7 h-7"
+                                    onClick={() => {
+                                      if (isCustom && !customPrompt) {
+                                        toast({ title: "Enter a description", description: "Type what you want to see in the text area above.", variant: "destructive" });
+                                        return;
+                                      }
+                                      if (!currentProfile) return;
+                                      const builtPrompt = buildLayerPrompt(layer, currentProfile);
+                                      if (!builtPrompt) {
+                                        toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
+                                        return;
+                                      }
+                                      handleGenerateVisual(layer.key, builtPrompt);
+                                    }}
+                                    disabled={!!generatingLayer}
+                                    data-testid={`button-generate-${layer.key}`}
+                                  >
+                                    {isGenerating ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Wand2 className="w-3.5 h-3.5" />
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </Card>
-                    );
-                  })}
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </div>
               </CardContent>
             </Card>
