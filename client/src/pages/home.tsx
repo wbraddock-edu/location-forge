@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/components/theme-provider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, setSessionToken, getSessionToken } from "@/lib/queryClient";
 import {
   Upload,
   FileText,
@@ -38,6 +38,13 @@ import {
   LayoutGrid,
   Play,
   Package,
+  LogOut,
+  Plus,
+  Trash2,
+  Pencil,
+  CreditCard,
+  FolderOpen,
+  User,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -182,7 +189,7 @@ const PROFILE_SECTIONS = [
 // Colors for avatar initials based on importance
 const IMPORTANCE_COLORS: Record<string, { bg: string; text: string }> = {
   major: { bg: "bg-primary", text: "text-primary-foreground" },
-  minor: { bg: "bg-amber-500/20 dark:bg-amber-400/20", text: "text-amber-700 dark:text-amber-300" },
+  minor: { bg: "bg-amber-400/20", text: "text-amber-300" },
   background: { bg: "bg-muted", text: "text-muted-foreground" },
 };
 
@@ -191,9 +198,61 @@ interface DevelopedItem {
   visualImages: Record<string, string>;
 }
 
+type AuthScreen = "login" | "register" | "forgot" | "reset";
+type AppScreen = "auth" | "projects" | "account" | "app";
+
+interface ProjectListItem {
+  id: number;
+  name: string;
+  locationCount: number;
+  developedCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SubscriptionStatus {
+  status: string;
+  plan: string | null;
+  trialDaysRemaining: number;
+  trialActive: boolean;
+  subscriptionActive: boolean;
+  isAdmin: boolean;
+  canAccess: boolean;
+  expiresAt: string | null;
+}
+
 export default function HomePage() {
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
+
+  // ── Auth State ──
+  const [appScreen, setAppScreen] = useState<AppScreen>("auth");
+  const [authScreen, setAuthScreen] = useState<AuthScreen>("login");
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUser, setAuthUser] = useState<{ id: number; email: string; displayName: string } | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
+
+  // ── Project State ──
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const [currentProjectName, setCurrentProjectName] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
+  const [renamingProjectId, setRenamingProjectId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  // ── Subscription State ──
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
+
+  // Auto-save timer ref
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // State
   const [step, setStep] = useState<Step>("upload");
@@ -590,7 +649,11 @@ export default function HomePage() {
 
   // Generate a single visual layer — now updates developedItems
   const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: string) => {
-    if (!prompt || demoMode || !expandedItem) return;
+    if (!prompt || demoMode || !expandedItem) {
+      if (!prompt) toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
+      if (!apiKey) toast({ title: "No API key", description: "Enter your API key to generate images.", variant: "destructive" });
+      return;
+    }
     setGeneratingLayer(layerKey);
     try {
       const imgProvider = provider === "anthropic" ? "openai" : provider;
@@ -663,6 +726,247 @@ export default function HomePage() {
     setAnalysisStage("");
   };
 
+  // ── Auth Handlers ──
+
+  const checkSession = async () => {
+    const token = getSessionToken();
+    if (!token) { setAuthLoading(false); return; }
+    try {
+      const res = await apiRequest("GET", "/api/auth/me");
+      const user = await res.json();
+      setAuthUser(user);
+      setAppScreen("projects");
+    } catch {
+      setSessionToken(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  useEffect(() => { checkSession(); }, []);
+
+  const handleRegister = async () => {
+    setAuthError("");
+    setAuthSubmitting(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/register", {
+        email: authEmail, password: authPassword, displayName: authDisplayName,
+      });
+      const data = await res.json();
+      setSessionToken(data.token);
+      setAuthUser(data.user);
+      setAppScreen("projects");
+    } catch (err: any) {
+      setAuthError(err.message?.replace(/^\d+:\s*/, "").replace(/.*"error":"/, "").replace(/".*/, "") || "Registration failed");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    setAuthError("");
+    setAuthSubmitting(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/login", {
+        email: authEmail, password: authPassword,
+      });
+      const data = await res.json();
+      setSessionToken(data.token);
+      setAuthUser(data.user);
+      setAppScreen("projects");
+    } catch (err: any) {
+      setAuthError(err.message?.replace(/^\d+:\s*/, "").replace(/.*"error":"/, "").replace(/".*/, "") || "Login failed");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try { await apiRequest("POST", "/api/auth/logout"); } catch {}
+    setSessionToken(null);
+    setAuthUser(null);
+    setAppScreen("auth");
+    setAuthScreen("login");
+    setCurrentProjectId(null);
+    handleReset();
+  };
+
+  const handleForgotPassword = async () => {
+    setAuthError("");
+    setAuthSubmitting(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/forgot-password", { email: authEmail });
+      const data = await res.json();
+      setResetMessage(data.message || "Check your email for a reset link.");
+      if (data.resetToken) setResetToken(data.resetToken);
+    } catch (err: any) {
+      setAuthError(err.message || "Failed to request password reset");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    setAuthError("");
+    setAuthSubmitting(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/reset-password", {
+        token: resetToken, newPassword,
+      });
+      const data = await res.json();
+      setResetMessage(data.message || "Password reset. You can now sign in.");
+      setTimeout(() => { setAuthScreen("login"); setResetMessage(""); }, 2000);
+    } catch (err: any) {
+      setAuthError(err.message || "Password reset failed");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  // ── Project Handlers ──
+
+  const loadProjects = async () => {
+    setProjectsLoading(true);
+    try {
+      const res = await apiRequest("GET", "/api/projects");
+      const data = await res.json();
+      setProjects(data.projects || []);
+    } catch {
+      setProjects([]);
+    } finally {
+      setProjectsLoading(false);
+    }
+  };
+
+  const loadSubscriptionStatus = async () => {
+    try {
+      const res = await apiRequest("GET", "/api/subscription/status");
+      const data = await res.json();
+      setSubscriptionStatus(data);
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (appScreen === "projects" && authUser) {
+      loadProjects();
+      loadSubscriptionStatus();
+    }
+  }, [appScreen, authUser]);
+
+  const handleCreateProject = async () => {
+    if (!newProjectName.trim()) return;
+    try {
+      const res = await apiRequest("POST", "/api/projects", { name: newProjectName.trim() });
+      const data = await res.json();
+      setNewProjectName("");
+      await loadProjects();
+      handleOpenProject(data.id, data.name);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleOpenProject = async (id: number, name: string) => {
+    setCurrentProjectId(id);
+    setCurrentProjectName(name);
+    try {
+      const res = await apiRequest("GET", `/api/projects/${id}`);
+      const data = await res.json();
+      const state = data.state || {};
+      // Restore project state
+      if (state.sourceText) setSourceText(state.sourceText);
+      if (state.sourceType) setSourceType(state.sourceType);
+      if (state.provider) setProvider(state.provider);
+      if (state.apiKey) setApiKey(state.apiKey);
+      if (state.artStyle) setArtStyle(state.artStyle);
+      if (state.detectedLocations) setDetectedLocations(state.detectedLocations);
+      if (state.developedItems) setDevelopedItems(state.developedItems);
+      if (state.step) setStep(state.step);
+      else setStep(state.detectedLocations?.length > 0 ? "dashboard" : "upload");
+      setAppScreen("app");
+    } catch (err: any) {
+      toast({ title: "Error", description: "Failed to load project", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteProject = async (id: number) => {
+    try {
+      await apiRequest("DELETE", `/api/projects/${id}`);
+      await loadProjects();
+      if (currentProjectId === id) {
+        setCurrentProjectId(null);
+        handleReset();
+        setAppScreen("projects");
+      }
+    } catch {}
+  };
+
+  const handleRenameProject = async (id: number) => {
+    if (!renameValue.trim()) return;
+    try {
+      await apiRequest("PATCH", `/api/projects/${id}/rename`, { name: renameValue.trim() });
+      if (currentProjectId === id) setCurrentProjectName(renameValue.trim());
+      setRenamingProjectId(null);
+      setRenameValue("");
+      await loadProjects();
+    } catch {}
+  };
+
+  const handleBackToProjects = () => {
+    // Save current state before leaving
+    if (currentProjectId) saveProjectState();
+    setAppScreen("projects");
+    handleReset();
+    setCurrentProjectId(null);
+  };
+
+  // ── Auto-Save ──
+
+  const saveProjectState = useCallback(async () => {
+    if (!currentProjectId) return;
+    const state: any = {
+      sourceText, sourceType, provider, apiKey, artStyle,
+      detectedLocations, developedItems, step,
+    };
+    try {
+      await apiRequest("PUT", `/api/projects/${currentProjectId}`, { state });
+    } catch {}
+  }, [currentProjectId, sourceText, sourceType, provider, apiKey, artStyle, detectedLocations, developedItems, step]);
+
+  // Auto-save on state changes (debounced)
+  useEffect(() => {
+    if (appScreen !== "app" || !currentProjectId) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      saveProjectState();
+    }, 3000);
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    };
+  }, [sourceText, sourceType, provider, apiKey, artStyle, detectedLocations, developedItems, step, appScreen, currentProjectId, saveProjectState]);
+
+  // ── Subscription Helpers ──
+
+  const handleCheckout = async (plan: "monthly" | "yearly") => {
+    try {
+      const res = await apiRequest("POST", "/api/subscription/checkout", { plan });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    try {
+      const res = await apiRequest("POST", "/api/subscription/portal");
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
   // Dashboard helpers
   const developedCount = Object.keys(developedItems).length;
   const totalCount = detectedLocations.length;
@@ -677,6 +981,320 @@ export default function HomePage() {
       return a.name.localeCompare(b.name);
     });
 
+  // ── Auth Loading Screen ──
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0b0d] flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-[#00d4aa] mx-auto" />
+          <p className="text-sm text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Auth Gate ──
+  if (appScreen === "auth") {
+    return (
+      <div className="min-h-screen bg-[#0a0b0d] flex items-center justify-center p-4">
+        <div className="w-full max-w-sm space-y-6">
+          <div className="text-center space-y-2">
+            <img src="./lrap-logo.jpg" alt="LRAP" className="w-12 h-12 rounded-lg mx-auto object-contain" />
+            <h1 className="text-xl font-bold text-white">Location Forge</h1>
+            <p className="text-sm text-gray-500">by Little Red Apple Productions</p>
+          </div>
+
+          <div className="bg-[#111214] border border-gray-800 rounded-xl p-6 space-y-4">
+            {authScreen === "login" && (
+              <>
+                <h2 className="text-lg font-semibold text-white text-center">Sign In</h2>
+                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
+                <div className="space-y-3">
+                  <Input placeholder="Email" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
+                  <Input placeholder="Password" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white"
+                    onKeyDown={(e) => e.key === "Enter" && handleLogin()} />
+                  <Button onClick={handleLogin} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
+                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign In"}
+                  </Button>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <button onClick={() => { setAuthScreen("register"); setAuthError(""); }} className="text-[#00d4aa] hover:underline">Create account</button>
+                  <button onClick={() => { setAuthScreen("forgot"); setAuthError(""); }} className="text-gray-500 hover:text-gray-300">Forgot password?</button>
+                </div>
+              </>
+            )}
+
+            {authScreen === "register" && (
+              <>
+                <h2 className="text-lg font-semibold text-white text-center">Create Account</h2>
+                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
+                <div className="space-y-3">
+                  <Input placeholder="Display name" value={authDisplayName} onChange={(e) => setAuthDisplayName(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
+                  <Input placeholder="Email" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
+                  <Input placeholder="Password (min 6 chars)" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white"
+                    onKeyDown={(e) => e.key === "Enter" && handleRegister()} />
+                  <Button onClick={handleRegister} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
+                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Account"}
+                  </Button>
+                </div>
+                <button onClick={() => { setAuthScreen("login"); setAuthError(""); }} className="text-xs text-[#00d4aa] hover:underline block text-center">Already have an account? Sign in</button>
+              </>
+            )}
+
+            {authScreen === "forgot" && (
+              <>
+                <h2 className="text-lg font-semibold text-white text-center">Reset Password</h2>
+                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
+                {resetMessage && <p className="text-sm text-[#00d4aa] text-center">{resetMessage}</p>}
+                <div className="space-y-3">
+                  <Input placeholder="Email" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
+                  <Button onClick={handleForgotPassword} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
+                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Reset Link"}
+                  </Button>
+                </div>
+                {resetToken && (
+                  <div className="space-y-3 pt-2 border-t border-gray-700">
+                    <p className="text-xs text-gray-400">Reset token generated. Enter it below with your new password:</p>
+                    <Input placeholder="Reset token" value={resetToken} onChange={(e) => setResetToken(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white font-mono text-xs" />
+                    <Input placeholder="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
+                    <Button onClick={handleResetPassword} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
+                      {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Reset Password"}
+                    </Button>
+                  </div>
+                )}
+                <button onClick={() => { setAuthScreen("login"); setAuthError(""); setResetMessage(""); setResetToken(""); }} className="text-xs text-[#00d4aa] hover:underline block text-center">Back to sign in</button>
+              </>
+            )}
+
+            {authScreen === "reset" && (
+              <>
+                <h2 className="text-lg font-semibold text-white text-center">Set New Password</h2>
+                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
+                {resetMessage && <p className="text-sm text-[#00d4aa] text-center">{resetMessage}</p>}
+                <div className="space-y-3">
+                  <Input placeholder="Reset token" value={resetToken} onChange={(e) => setResetToken(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white font-mono text-xs" />
+                  <Input placeholder="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
+                  <Button onClick={handleResetPassword} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
+                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Reset Password"}
+                  </Button>
+                </div>
+                <button onClick={() => { setAuthScreen("login"); setAuthError(""); setResetMessage(""); }} className="text-xs text-[#00d4aa] hover:underline block text-center">Back to sign in</button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Project List Screen ──
+  if (appScreen === "projects") {
+    return (
+      <div className="min-h-screen bg-[#0a0b0d]">
+        <header className="border-b border-gray-800 bg-[#111214]/80 backdrop-blur-sm sticky top-0 z-50">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <img src="./lrap-logo.jpg" alt="LRAP" className="w-8 h-8 rounded-sm object-contain" />
+              <span className="font-bold text-lg text-white">Location Forge</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-400">{authUser?.displayName}</span>
+              <Button variant="ghost" size="sm" onClick={() => setAppScreen("account")} className="text-gray-400 hover:text-white">
+                <User className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleLogout} className="text-gray-400 hover:text-white">
+                <LogOut className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+          {/* Subscription banner */}
+          {subscriptionStatus && !subscriptionStatus.isAdmin && (
+            <div className="mb-6">
+              {subscriptionStatus.trialActive && !subscriptionStatus.subscriptionActive && (
+                <div className="bg-[#111214] border border-[#00d4aa]/30 rounded-lg p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-white">Free trial — <span className="text-[#00d4aa] font-semibold">{subscriptionStatus.trialDaysRemaining} days remaining</span></p>
+                    <p className="text-xs text-gray-500 mt-0.5">Upgrade to keep building location profiles</p>
+                  </div>
+                  <Button size="sm" onClick={() => setAppScreen("account")} className="bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">Upgrade</Button>
+                </div>
+              )}
+              {!subscriptionStatus.canAccess && (
+                <div className="bg-[#111214] border border-red-500/30 rounded-lg p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-red-400 font-semibold">Trial expired</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Subscribe to continue using Location Forge</p>
+                  </div>
+                  <Button size="sm" onClick={() => setAppScreen("account")} className="bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">Subscribe</Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-white">Projects</h2>
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="New project name..."
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+                className="w-56 bg-[#111214] border-gray-700 text-white text-sm"
+              />
+              <Button size="sm" onClick={handleCreateProject} className="bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
+                <Plus className="w-4 h-4 mr-1" /> New
+              </Button>
+            </div>
+          </div>
+
+          {projectsLoading ? (
+            <div className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[#00d4aa] mx-auto" /></div>
+          ) : projects.length === 0 ? (
+            <div className="text-center py-16 space-y-3">
+              <FolderOpen className="w-12 h-12 text-gray-600 mx-auto" />
+              <p className="text-gray-500">No projects yet. Create one to get started.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {projects.map((p) => (
+                <div key={p.id} className="bg-[#111214] border border-gray-800 rounded-lg p-4 flex items-center justify-between hover:border-gray-600 transition-colors group">
+                  {renamingProjectId === p.id ? (
+                    <div className="flex items-center gap-2 flex-1 mr-4">
+                      <Input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleRenameProject(p.id); if (e.key === "Escape") setRenamingProjectId(null); }}
+                        className="bg-[#0a0b0d] border-gray-700 text-white text-sm"
+                      />
+                      <Button size="sm" variant="ghost" onClick={() => handleRenameProject(p.id)} className="text-[#00d4aa]"><Check className="w-4 h-4" /></Button>
+                    </div>
+                  ) : (
+                    <div className="cursor-pointer flex-1 min-w-0" onClick={() => handleOpenProject(p.id, p.name)}>
+                      <h3 className="font-semibold text-white truncate">{p.name}</h3>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-xs text-gray-500">{p.locationCount} location{p.locationCount !== 1 ? "s" : ""}</span>
+                        <span className="text-xs text-gray-500">{p.developedCount} developed</span>
+                        <span className="text-xs text-gray-600">Updated {new Date(p.updatedAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500 hover:text-white"
+                      onClick={(e) => { e.stopPropagation(); setRenamingProjectId(p.id); setRenameValue(p.name); }}>
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500 hover:text-red-400"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteProject(p.id); }}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  // ── Account / Subscription Screen ──
+  if (appScreen === "account") {
+    return (
+      <div className="min-h-screen bg-[#0a0b0d]">
+        <header className="border-b border-gray-800 bg-[#111214]/80 backdrop-blur-sm sticky top-0 z-50">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setAppScreen("projects")} className="text-gray-400 hover:text-white">
+                <ArrowLeft className="w-4 h-4 mr-1.5" /> Projects
+              </Button>
+            </div>
+            <span className="text-sm text-gray-400">{authUser?.displayName}</span>
+          </div>
+        </header>
+
+        <main className="max-w-lg mx-auto px-4 sm:px-6 py-8 space-y-6">
+          <h2 className="text-xl font-bold text-white">Account</h2>
+
+          <div className="bg-[#111214] border border-gray-800 rounded-xl p-5 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-[#00d4aa]/20 flex items-center justify-center text-[#00d4aa] font-bold">
+                {authUser?.displayName?.[0]?.toUpperCase() || "?"}
+              </div>
+              <div>
+                <p className="text-white font-semibold">{authUser?.displayName}</p>
+                <p className="text-sm text-gray-500">{authUser?.email}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-[#111214] border border-gray-800 rounded-xl p-5 space-y-4">
+            <h3 className="text-white font-semibold flex items-center gap-2"><CreditCard className="w-4 h-4 text-[#00d4aa]" /> Subscription</h3>
+            {subscriptionStatus && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-400">Status</span>
+                  <Badge className={subscriptionStatus.isAdmin ? "bg-purple-500/20 text-purple-300" : subscriptionStatus.subscriptionActive ? "bg-green-500/20 text-green-300" : subscriptionStatus.trialActive ? "bg-yellow-500/20 text-yellow-300" : "bg-red-500/20 text-red-300"}>
+                    {subscriptionStatus.isAdmin ? "Admin" : subscriptionStatus.subscriptionActive ? "Active" : subscriptionStatus.trialActive ? `Trial (${subscriptionStatus.trialDaysRemaining}d)` : "Expired"}
+                  </Badge>
+                </div>
+                {subscriptionStatus.plan && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-400">Plan</span>
+                    <span className="text-sm text-white capitalize">{subscriptionStatus.plan}</span>
+                  </div>
+                )}
+                {subscriptionStatus.expiresAt && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-400">Renews</span>
+                    <span className="text-sm text-white">{new Date(subscriptionStatus.expiresAt).toLocaleDateString()}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {subscriptionStatus && !subscriptionStatus.isAdmin && !subscriptionStatus.subscriptionActive && (
+              <div className="space-y-3 pt-3 border-t border-gray-700">
+                <p className="text-sm text-gray-400">Choose a plan to continue:</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => handleCheckout("monthly")}
+                    className="bg-[#0a0b0d] border border-gray-700 rounded-lg p-4 text-left hover:border-[#00d4aa] transition-colors"
+                  >
+                    <p className="text-white font-semibold">Monthly</p>
+                    <p className="text-[#00d4aa] text-lg font-bold mt-1">$9<span className="text-xs text-gray-500 font-normal">/mo</span></p>
+                  </button>
+                  <button
+                    onClick={() => handleCheckout("yearly")}
+                    className="bg-[#0a0b0d] border border-[#00d4aa]/50 rounded-lg p-4 text-left hover:border-[#00d4aa] transition-colors relative"
+                  >
+                    <span className="absolute -top-2 right-2 text-[10px] bg-[#00d4aa] text-black px-2 py-0.5 rounded-full font-semibold">SAVE 33%</span>
+                    <p className="text-white font-semibold">Yearly</p>
+                    <p className="text-[#00d4aa] text-lg font-bold mt-1">$72<span className="text-xs text-gray-500 font-normal">/yr</span></p>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {subscriptionStatus?.subscriptionActive && (
+              <Button variant="outline" size="sm" onClick={handleManageSubscription} className="w-full border-gray-700 text-gray-300 hover:text-white">
+                Manage Subscription
+              </Button>
+            )}
+          </div>
+
+          <Button variant="outline" size="sm" onClick={handleLogout} className="w-full border-gray-700 text-gray-400 hover:text-white">
+            <LogOut className="w-4 h-4 mr-2" /> Sign Out
+          </Button>
+        </main>
+      </div>
+    );
+  }
+
+  // ── Main App (inside a project) ──
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -689,23 +1307,28 @@ export default function HomePage() {
               className="w-8 h-8 rounded-sm object-contain shrink-0"
             />
             <div className="flex items-baseline gap-0" data-testid="text-app-title">
-              <span className="font-serif font-bold text-lg tracking-tight">Location Forge</span>
-              <span className="text-[11px] text-muted-foreground ml-1.5">- by Little Red Apple Productions</span>
+              <span className="font-sans font-bold text-lg tracking-tight">Location Forge</span>
+              {currentProjectName && (
+                <span className="text-[11px] text-muted-foreground ml-1.5">— {currentProjectName}</span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={handleBackToProjects}>
+              <ArrowLeft className="w-4 h-4 mr-1.5" />
+              Projects
+            </Button>
             {step === "results" && (
               <Button variant="ghost" size="sm" onClick={handleBackToDashboard} data-testid="button-back-dashboard">
-                <ArrowLeft className="w-4 h-4 mr-1.5" />
                 Dashboard
               </Button>
             )}
             {step === "dashboard" && (
               <Button variant="ghost" size="sm" onClick={handleReset} data-testid="button-new-scan">
-                <ArrowLeft className="w-4 h-4 mr-1.5" />
                 New
               </Button>
             )}
+            <span className="text-xs text-muted-foreground">{authUser?.displayName}</span>
             <Button
               variant="ghost"
               size="icon"
@@ -726,7 +1349,7 @@ export default function HomePage() {
           <div className="space-y-6">
             {/* Hero */}
             <div className="text-center space-y-2 pb-2">
-              <h1 className="font-serif font-bold text-xl">Build Location Profiles</h1>
+              <h1 className="font-sans font-bold text-xl">Build Location Profiles</h1>
               <p className="text-muted-foreground text-sm max-w-lg mx-auto">
                 Upload a story manuscript or location description. The AI will scan for locations,
                 then you can develop complete 10-section profiles with visual studies for any or all of them.
@@ -942,14 +1565,14 @@ export default function HomePage() {
             {/* Dashboard Header */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
-                <h2 className="font-serif font-bold text-xl flex items-center gap-2">
+                <h2 className="font-sans font-bold text-xl flex items-center gap-2">
                   <LayoutGrid className="w-5 h-5 text-primary" />
                   Location Dashboard
                 </h2>
                 <p className="text-sm text-muted-foreground mt-0.5">
                   {totalCount} location{totalCount !== 1 ? "s" : ""} detected
                   {" · "}
-                  <span className={developedCount > 0 ? "text-green-600 dark:text-green-400 font-medium" : ""}>
+                  <span className={developedCount > 0 ? "text-primary font-medium" : ""}>
                     {developedCount} of {totalCount} developed
                   </span>
                 </p>
@@ -1058,7 +1681,7 @@ export default function HomePage() {
                     key={loc.name}
                     className={`transition-all ${
                       isDeveloped
-                        ? "border-green-500/30 dark:border-green-400/20 shadow-sm"
+                        ? "border-l-2 border-l-primary border-t-border border-r-border border-b-border shadow-sm"
                         : "border-border"
                     }`}
                     data-testid={`card-location-${i}`}
@@ -1075,7 +1698,7 @@ export default function HomePage() {
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <h3 className="font-semibold text-sm truncate">{loc.name}</h3>
                             {isDeveloped && (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-green-600 dark:text-green-400 shrink-0" />
+                              <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0" />
                             )}
                           </div>
                           <div className="flex items-center gap-1.5 mt-1">
@@ -1098,9 +1721,9 @@ export default function HomePage() {
                       <div className="pt-1">
                         {isDeveloped ? (
                           <Button
-                            variant="secondary"
+                            variant="outline"
                             size="sm"
-                            className="w-full"
+                            className="w-full border-primary/40 text-primary hover:bg-primary/10 hover:text-primary"
                             onClick={() => handleView(loc.name)}
                             data-testid={`button-view-${i}`}
                           >
@@ -1149,7 +1772,7 @@ export default function HomePage() {
               <Wand2 className="w-7 h-7 text-primary animate-pulse" />
             </div>
             <div className="space-y-2">
-              <h2 className="font-serif font-bold text-xl">
+              <h2 className="font-sans font-bold text-xl">
                 Building Profile for {developingLocation}
               </h2>
               <p className="text-sm text-muted-foreground">{analysisStage}</p>
@@ -1171,7 +1794,7 @@ export default function HomePage() {
                   <Button variant="ghost" size="icon" className="w-8 h-8 shrink-0" onClick={handleBackToDashboard} data-testid="button-back-to-dashboard-inline">
                     <ArrowLeft className="w-4 h-4" />
                   </Button>
-                  <h2 className="font-serif font-bold text-xl">{expandedItem}</h2>
+                  <h2 className="font-sans font-bold text-xl">{expandedItem}</h2>
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5 ml-10">{currentProfile.logline}</p>
               </div>
@@ -1326,13 +1949,19 @@ export default function HomePage() {
                     return (
                       <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
                         {img ? (
-                          <img
-                            src={`data:image/png;base64,${img}`}
-                            alt={layer.title}
-                            className="w-full aspect-square object-cover"
-                          />
+                          <div className="relative w-full aspect-square">
+                            <img
+                              src={`data:image/png;base64,${img}`}
+                              alt={layer.title}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+                              <p className="text-xs font-medium text-white/90">{layer.title}</p>
+                              <p className="text-[10px] text-white/60 uppercase tracking-wider">{layer.subtitle}</p>
+                            </div>
+                          </div>
                         ) : isCustom && !isGenerating ? (
-                          <div className="w-full aspect-[4/3] bg-muted/30 p-3 flex flex-col">
+                          <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] p-3 flex flex-col">
                             <Textarea
                               placeholder="Describe the scene... e.g. 'aerial view during a thunderstorm at midnight, lightning illuminating the mountain, rain pouring down'"
                               value={customPrompt}
@@ -1342,7 +1971,7 @@ export default function HomePage() {
                             />
                           </div>
                         ) : (
-                          <div className="w-full aspect-[4/3] bg-muted/50 flex items-center justify-center">
+                          <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] flex items-center justify-center">
                             {isGenerating ? (
                               <div className="text-center">
                                 <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-primary" />
@@ -1380,7 +2009,7 @@ export default function HomePage() {
                                 data-testid={`button-copy-${layer.key}`}
                               >
                                 {copiedPrompt === layer.key ? (
-                                  <Check className="w-3.5 h-3.5 text-green-600" />
+                                  <Check className="w-3.5 h-3.5 text-primary" />
                                 ) : (
                                   <Copy className="w-3.5 h-3.5" />
                                 )}
@@ -1478,7 +2107,7 @@ export default function HomePage() {
                   {PROFILE_SECTIONS.map((section) => (
                     <TabsContent key={section.num} value={String(section.num)} className="p-5 mt-0">
                       <div className="space-y-4">
-                        <h3 className="font-serif font-bold text-base text-primary">
+                        <h3 className="font-sans font-bold text-base text-primary">
                           Section {section.num} · {section.title}
                         </h3>
                         <div className="space-y-3">

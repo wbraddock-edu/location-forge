@@ -1,13 +1,29 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
+import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import { storage } from "./storage";
+import { db } from "./db";
+import { sqlite } from "./db";
+import { eq } from "drizzle-orm";
 import {
+  users,
+  authSessions,
+  passwordResets,
+  sessions,
   scanRequestSchema,
   analyzeRequestSchema,
   generateImageRequestSchema,
   type LocationProfile,
   type DetectedLocation,
 } from "@shared/schema";
+import { registerStripeRoutes, canAccessFeatures } from "./stripe";
+
+declare module "express" {
+  interface Request {
+    userId?: number;
+  }
+}
 import {
   Document,
   Packer,
@@ -95,6 +111,10 @@ async function callTextAI(
       throw new Error(`Google AI API error: ${res.status} - ${err}`);
     }
     const data = await res.json();
+    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
+      console.error("Google AI returned empty response:", JSON.stringify(data).substring(0, 500));
+      throw new Error("Google AI returned an empty or blocked response. Try again or use shorter text.");
+    }
     return data.candidates[0].content.parts[0].text;
   }
   throw new Error(`Unknown provider: ${provider}`);
@@ -531,8 +551,305 @@ function buildDocx(profile: LocationProfile, imageBuffers?: Record<string, Buffe
 // ── Route Registration ──
 
 export async function registerRoutes(httpServer: Server, app: Express) {
+
+  // ── Auth Routes (before middleware) ──
+
+  app.post("/api/auth/register", async (req: Request, res: Response) => {
+    try {
+      const { email, password, displayName } = req.body;
+      if (!email || !password || !displayName) {
+        return res.status(400).json({ error: "email, password, and displayName are required" });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters" });
+      }
+      const existing = db.select().from(users).where(eq(users.email, email.toLowerCase().trim())).get();
+      if (existing) {
+        return res.status(409).json({ error: "An account with this email already exists" });
+      }
+      const passwordHash = bcrypt.hashSync(password, 10);
+      const now = new Date().toISOString();
+      const user = db.insert(users).values({
+        email: email.toLowerCase().trim(),
+        passwordHash,
+        displayName: displayName.trim(),
+        createdAt: now,
+      }).returning().get();
+
+      const token = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      db.insert(authSessions).values({ userId: user.id, token, expiresAt, createdAt: now }).run();
+
+      return res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "email and password are required" });
+      }
+      const user = db.select().from(users).where(eq(users.email, email.toLowerCase().trim())).get();
+      if (!user) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      if (!bcrypt.compareSync(password, user.passwordHash)) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      const now = new Date().toISOString();
+      const token = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      db.insert(authSessions).values({ userId: user.id, token, expiresAt, createdAt: now }).run();
+
+      return res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/auth/logout", (req: Request, res: Response) => {
+    const token = req.headers["x-session-id"] as string;
+    if (token) {
+      db.delete(authSessions).where(eq(authSessions.token, token)).run();
+    }
+    return res.json({ ok: true });
+  });
+
+  app.get("/api/auth/me", (req: Request, res: Response) => {
+    const token = req.headers["x-session-id"] as string;
+    if (!token) return res.status(401).json({ error: "Not authenticated" });
+
+    const session = db.select().from(authSessions).where(eq(authSessions.token, token)).get();
+    if (!session || new Date(session.expiresAt) < new Date()) {
+      return res.status(401).json({ error: "Session expired" });
+    }
+    const user = db.select().from(users).where(eq(users.id, session.userId)).get();
+    if (!user) return res.status(401).json({ error: "User not found" });
+
+    return res.json({ id: user.id, email: user.email, displayName: user.displayName });
+  });
+
+  app.post("/api/auth/forgot-password", (req: Request, res: Response) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ error: "email is required" });
+
+      const user = db.select().from(users).where(eq(users.email, email.toLowerCase().trim())).get();
+      if (!user) {
+        return res.json({ ok: true, message: "If that email exists, a reset token has been generated." });
+      }
+
+      const token = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      db.insert(passwordResets).values({ userId: user.id, token, expiresAt, createdAt: now }).run();
+
+      return res.json({ ok: true, resetToken: token, message: "Reset token generated. Share with admin or use directly." });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/auth/reset-password", (req: Request, res: Response) => {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token || !newPassword) return res.status(400).json({ error: "token and newPassword are required" });
+      if (newPassword.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters" });
+
+      const reset = db.select().from(passwordResets).where(eq(passwordResets.token, token)).get();
+      if (!reset || new Date(reset.expiresAt) < new Date()) {
+        return res.status(400).json({ error: "Invalid or expired reset token" });
+      }
+
+      const passwordHash = bcrypt.hashSync(newPassword, 10);
+      db.update(users).set({ passwordHash }).where(eq(users.id, reset.userId)).run();
+      db.delete(passwordResets).where(eq(passwordResets.token, token)).run();
+
+      return res.json({ ok: true, message: "Password has been reset. You can now sign in." });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Auth Middleware — protects all /api/* except /api/auth/* and /api/stripe/webhook ──
+  app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/auth/") || req.path.startsWith("/auth") || req.path === "/stripe/webhook") {
+      return next();
+    }
+    const token = req.headers["x-session-id"] as string;
+    if (!token) return res.status(401).json({ error: "Authentication required" });
+
+    const session = db.select().from(authSessions).where(eq(authSessions.token, token)).get();
+    if (!session || new Date(session.expiresAt) < new Date()) {
+      return res.status(401).json({ error: "Session expired" });
+    }
+    req.userId = session.userId;
+    next();
+  });
+
+  // Register Stripe subscription routes
+  registerStripeRoutes(app);
+
+  // Feature gate helper — checks trial/subscription status
+  function requireActiveSubscription(req: Request, res: Response): boolean {
+    const user = sqlite.prepare("SELECT * FROM users WHERE id = ?").get(req.userId!) as any;
+    if (!user) { res.status(401).json({ error: "Not authenticated" }); return false; }
+    if (!canAccessFeatures(user)) {
+      res.status(403).json({ error: "subscription_required", message: "Your trial has expired. Please upgrade to continue using Location Forge." });
+      return false;
+    }
+    return true;
+  }
+
+  // ── Session Save/Load (per-user) ──
+
+  app.post("/api/session/save", (req: Request, res: Response) => {
+    try {
+      const key = `user_${req.userId}`;
+      const stateJson = JSON.stringify(req.body.state || {});
+      const now = new Date().toISOString();
+      const existing = db.select().from(sessions).where(eq(sessions.sessionKey, key)).get();
+      if (existing) {
+        db.update(sessions).set({ stateJson, updatedAt: now }).where(eq(sessions.sessionKey, key)).run();
+      } else {
+        db.insert(sessions).values({ sessionKey: key, userId: req.userId!, stateJson, updatedAt: now }).run();
+      }
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/session/load", (req: Request, res: Response) => {
+    try {
+      const key = `user_${req.userId}`;
+      const session = db.select().from(sessions).where(eq(sessions.sessionKey, key)).get();
+      if (!session) return res.json({ state: null });
+      return res.json({ state: JSON.parse(session.stateJson) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Projects API ──
+
+  app.get("/api/projects", (req: Request, res: Response) => {
+    try {
+      const rows = sqlite.prepare(
+        `SELECT id, name, created_at, updated_at,
+         json_extract(state_json, '$.detectedLocations') as locations_json
+         FROM projects WHERE user_id = ? ORDER BY updated_at DESC`
+      ).all(req.userId!) as any[];
+
+      const projects = rows.map((r: any) => {
+        let locationCount = 0;
+        let developedCount = 0;
+        try {
+          const locs = JSON.parse(r.locations_json || '[]');
+          locationCount = locs.length;
+        } catch {}
+        try {
+          const full = sqlite.prepare(`SELECT state_json FROM projects WHERE id = ?`).get(r.id) as any;
+          if (full) {
+            const state = JSON.parse(full.state_json);
+            developedCount = Object.keys(state.developedItems || {}).length;
+          }
+        } catch {}
+        return {
+          id: r.id,
+          name: r.name,
+          locationCount,
+          developedCount,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        };
+      });
+
+      return res.json({ projects });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/projects", (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name || typeof name !== 'string') return res.status(400).json({ error: "name required" });
+      const now = new Date().toISOString();
+      const result = sqlite.prepare(
+        `INSERT INTO projects (user_id, name, state_json, created_at, updated_at) VALUES (?, ?, '{}', ?, ?)`
+      ).run(req.userId!, name.trim(), now, now);
+      return res.json({ id: Number(result.lastInsertRowid), name: name.trim() });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/projects/:id", (req: Request, res: Response) => {
+    try {
+      const row = sqlite.prepare(
+        `SELECT id, name, state_json, created_at, updated_at FROM projects WHERE id = ? AND user_id = ?`
+      ).get(parseInt(req.params.id as string), req.userId!) as any;
+      if (!row) return res.status(404).json({ error: "Project not found" });
+      const rawJson = `{"id":${row.id},"name":${JSON.stringify(row.name)},"state":${row.state_json || '{}'},"createdAt":${JSON.stringify(row.created_at)},"updatedAt":${JSON.stringify(row.updated_at)}}`;
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(rawJson);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/projects/:id", (req: Request, res: Response) => {
+    try {
+      const { state, name } = req.body;
+      const now = new Date().toISOString();
+      const updates: string[] = [];
+      const params: any[] = [];
+      if (state) { updates.push('state_json = ?'); params.push(JSON.stringify(state)); }
+      if (name) { updates.push('name = ?'); params.push(name.trim()); }
+      updates.push('updated_at = ?'); params.push(now);
+      params.push(parseInt(req.params.id as string), req.userId!);
+
+      sqlite.prepare(
+        `UPDATE projects SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`
+      ).run(...params);
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/projects/:id", (req: Request, res: Response) => {
+    try {
+      sqlite.prepare(
+        `DELETE FROM projects WHERE id = ? AND user_id = ?`
+      ).run(parseInt(req.params.id as string), req.userId!);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/projects/:id/rename", (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name || typeof name !== 'string') return res.status(400).json({ error: "name required" });
+      sqlite.prepare(
+        `UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?`
+      ).run(name.trim(), new Date().toISOString(), parseInt(req.params.id as string), req.userId!);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // Step 1: Scan text for locations
   app.post("/api/scan", async (req: Request, res: Response) => {
+    if (!requireActiveSubscription(req, res)) return;
     try {
       const parsed = scanRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -581,6 +898,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
   // Step 2: Analyze a specific location
   app.post("/api/analyze", async (req: Request, res: Response) => {
+    if (!requireActiveSubscription(req, res)) return;
     try {
       const parsed = analyzeRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -637,6 +955,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
   // Step 3: Generate location visual
   app.post("/api/generate-image", async (req: Request, res: Response) => {
+    if (!requireActiveSubscription(req, res)) return;
     try {
       const parsed = generateImageRequestSchema.safeParse(req.body);
       if (!parsed.success) {
