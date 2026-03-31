@@ -17,7 +17,7 @@ import {
   type LocationProfile,
   type DetectedLocation,
 } from "@shared/schema";
-import { registerStripeRoutes, canAccessFeatures } from "./stripe";
+import { registerStripeRoutes, canAccessFeatures, isAdmin, isTrialActive, hasActiveSubscription } from "./stripe";
 
 declare module "express" {
   interface Request {
@@ -708,6 +708,9 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   // Register Stripe subscription routes
   registerStripeRoutes(app);
 
+  // Platform API key for trial users
+  const PLATFORM_API_KEY = process.env.GOOGLE_API_KEY || "";
+
   // Feature gate helper — checks trial/subscription status
   function requireActiveSubscription(req: Request, res: Response): boolean {
     const user = sqlite.prepare("SELECT * FROM users WHERE id = ?").get(req.userId!) as any;
@@ -717,6 +720,26 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       return false;
     }
     return true;
+  }
+
+  // Resolve API key: user's own key, or platform key during trial/admin
+  function resolveApiKey(userApiKey: string | undefined, userId: number): { key: string; isUserKey: boolean; error?: string } {
+    if (userApiKey && userApiKey.trim()) {
+      return { key: userApiKey.trim(), isUserKey: true };
+    }
+    // Check if user is in trial or admin — use platform key
+    const user = sqlite.prepare("SELECT * FROM users WHERE id = ?").get(userId) as any;
+    if (!user) return { key: "", isUserKey: false, error: "Not authenticated" };
+    if (isAdmin(user) || isTrialActive(user)) {
+      if (PLATFORM_API_KEY) {
+        return { key: PLATFORM_API_KEY, isUserKey: false };
+      }
+    }
+    // After trial, user must have their own key
+    if (hasActiveSubscription(user) && !userApiKey?.trim()) {
+      return { key: "", isUserKey: false, error: "api_key_required" };
+    }
+    return { key: "", isUserKey: false, error: "api_key_required" };
   }
 
   // ── Session Save/Load (per-user) ──
@@ -871,11 +894,13 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(400).json({ error: parsed.error.errors[0].message });
       }
 
-      const { text, sourceType, provider, apiKey } = parsed.data;
+      const { text, sourceType, provider, apiKey: userApiKey } = parsed.data;
+      const resolved = resolveApiKey(userApiKey, req.userId!);
+      if (resolved.error) return res.status(403).json({ error: resolved.error, message: "Please add your Google AI API key in Account settings." });
 
       const result = await callTextAI(
         provider,
-        apiKey,
+        resolved.key,
         SCAN_SYSTEM_PROMPT,
         `Here is the ${sourceType} text to analyze:\n\n${text}`
       );
@@ -920,12 +945,14 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(400).json({ error: parsed.error.errors[0].message });
       }
 
-      const { text, sourceType, provider, apiKey, locationName } = parsed.data;
+      const { text, sourceType, provider, apiKey: userApiKey, locationName } = parsed.data;
+      const resolved = resolveApiKey(userApiKey, req.userId!);
+      if (resolved.error) return res.status(403).json({ error: resolved.error, message: "Please add your Google AI API key in Account settings." });
       const systemPrompt = buildAnalyzePrompt(locationName, sourceType);
 
       const result = await callTextAI(
         provider,
-        apiKey,
+        resolved.key,
         systemPrompt,
         `Here is the text to analyze for the location "${locationName}":\n\n${text}`
       );
@@ -977,10 +1004,12 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(400).json({ error: parsed.error.errors[0].message });
       }
 
-      const { prompt, style, referenceImages, provider, apiKey } = parsed.data;
+      const { prompt, style, referenceImages, provider, apiKey: userApiKey } = parsed.data;
+      const resolved = resolveApiKey(userApiKey, req.userId!);
+      if (resolved.error) return res.status(403).json({ error: resolved.error, message: "Please add your Google AI API key in Account settings." });
       // Prepend style directive to ensure consistency
       const styledPrompt = style ? `${style}. ${prompt}` : prompt;
-      const base64 = await callImageAI(provider, apiKey, styledPrompt, referenceImages);
+      const base64 = await callImageAI(provider, resolved.key, styledPrompt, referenceImages);
 
       return res.json({ image: base64 });
     } catch (err: any) {
