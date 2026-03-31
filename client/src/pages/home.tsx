@@ -301,14 +301,65 @@ export default function HomePage() {
   const currentVisualImages = expandedItem ? developedItems[expandedItem]?.visualImages ?? {} : {};
   const selectedLocation = expandedItem || "";
 
-  // Visual study layer definitions — 6 panels for locations
+  // Visual study layer definitions — expanded panel system for locations
+  // Core panels (21) auto-generate, Optional panels (20+) available on demand
   const VISUAL_LAYERS = [
-    { key: "establishing", title: "Establishing Shot", subtitle: "Scope Layer", profileKey: "visualEstablishing" as keyof LocationProfile, description: "Wide/aerial view — full environment scope" },
-    { key: "architectural", title: "Architectural Detail", subtitle: "Structure Layer", profileKey: "visualArchitectural" as keyof LocationProfile, description: "Materials, textures, construction details" },
-    { key: "interior", title: "Interior / Focal Point", subtitle: "Heart Layer", profileKey: "visualInterior" as keyof LocationProfile, description: "The most important space within" },
-    { key: "lighting", title: "Lighting & Atmosphere", subtitle: "Mood Layer", profileKey: "visualLighting" as keyof LocationProfile, description: "Day, night, storm, emergency variations" },
-    { key: "storytelling", title: "Environmental Storytelling", subtitle: "History Layer", profileKey: "visualStorytelling" as keyof LocationProfile, description: "Objects, wear, signs of life or decay" },
-    { key: "custom", title: "Custom Scene", subtitle: "Director's Shot", profileKey: "" as keyof LocationProfile, description: "Describe any scene — change time, weather, angle, event" },
+    // ── Foundation (Core 1-6: Original panels) ──
+    { key: "establishing", title: "Establishing Shot", subtitle: "Scope Layer", isCore: true, profileKey: "visualEstablishing" as keyof LocationProfile, description: "Wide aerial view, full environment scope, hero shot" },
+    { key: "architectural", title: "Architectural Detail", subtitle: "Structure Layer", isCore: true, profileKey: "visualArchitectural" as keyof LocationProfile, description: "Materials, textures, construction details, close-up" },
+    { key: "interior", title: "Interior Focal Point", subtitle: "Heart Layer", isCore: true, profileKey: "visualInterior" as keyof LocationProfile, description: "The most important space within this location" },
+    { key: "lighting", title: "Lighting Default", subtitle: "Mood Layer", isCore: true, profileKey: "visualLighting" as keyof LocationProfile, description: "Default lighting conditions, primary atmosphere" },
+    { key: "storytelling", title: "Environmental Storytelling", subtitle: "History Layer", isCore: true, profileKey: "visualStorytelling" as keyof LocationProfile, description: "Objects, wear, signs of life or decay that tell the story" },
+    { key: "custom", title: "Director Shot", subtitle: "Custom", isCore: true, profileKey: "" as keyof LocationProfile, description: "Custom scene — any angle, time, weather, event" },
+
+    // ── Angles & Coverage (Core 7-12) ──
+    { key: "wideShot", title: "Wide Shot", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Full wide shot showing the entire location in context" },
+    { key: "mediumShot", title: "Medium Shot", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Medium framing showing key area with surrounding context" },
+    { key: "closeUp", title: "Close-Up Detail", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Extreme close-up of a defining detail, texture, or object" },
+    { key: "aerialView", title: "Aerial View", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Bird's eye view showing layout, paths, and spatial relationships" },
+    { key: "groundLevel", title: "Ground Level POV", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Eye-level perspective as a character would see it entering" },
+    { key: "reverseAngle", title: "Reverse Angle", subtitle: "Coverage", isCore: true, profileKey: "" as keyof LocationProfile, description: "Looking back from the opposite direction of the establishing shot" },
+
+    // ── Time of Day (Core 13-16) ──
+    { key: "dawn", title: "Dawn", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Early morning golden hour light, soft warm glow, long shadows" },
+    { key: "midday", title: "Midday", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Harsh overhead sunlight, strong contrast, minimal shadows" },
+    { key: "sunset", title: "Sunset", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Golden hour warm light, dramatic long shadows, rich colors" },
+    { key: "night", title: "Night", subtitle: "Time of Day", isCore: true, profileKey: "" as keyof LocationProfile, description: "Nighttime with available light sources, moonlight, artificial light" },
+
+    // ── Weather & Atmosphere (Core 17-21) ──
+    { key: "clearDay", title: "Clear Day", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Bright clear sky, optimal visibility, clean atmosphere" },
+    { key: "overcast", title: "Overcast", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Heavy cloud cover, flat diffused light, muted colors" },
+    { key: "rain", title: "Rain", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Rain falling, wet surfaces, reflections, puddles" },
+    { key: "fog", title: "Fog", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Dense fog or mist, reduced visibility, atmospheric depth" },
+    { key: "storm", title: "Storm", subtitle: "Weather", isCore: true, profileKey: "" as keyof LocationProfile, description: "Dramatic storm conditions, dark clouds, lightning, wind" },
+
+    // ── Seasonal Variations (Optional) ──
+    { key: "spring", title: "Spring", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Spring growth, fresh green, blooming, bright light" },
+    { key: "summer", title: "Summer", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Peak summer, lush vegetation, warm saturated colors" },
+    { key: "autumn", title: "Autumn", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Fall colors, warm oranges and reds, leaves, harvest light" },
+    { key: "winter", title: "Winter", subtitle: "Season", isCore: false, profileKey: "" as keyof LocationProfile, description: "Winter conditions, snow, bare trees, cold blue tones" },
+
+    // ── Narrative Moments (Optional) ──
+    { key: "empty", title: "Empty", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "Location completely empty, no characters, abandoned feeling" },
+    { key: "populated", title: "Populated", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "Location busy with activity, characters present, alive" },
+    { key: "aftermath", title: "Aftermath", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "After a major event, showing damage, debris, consequences" },
+    { key: "discovery", title: "Discovery Moment", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "The moment a character first discovers this location" },
+    { key: "conflict", title: "Conflict Scene", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "During the key conflict or dramatic event at this location" },
+    { key: "resolution", title: "Resolution", subtitle: "Narrative", isCore: false, profileKey: "" as keyof LocationProfile, description: "Location at the story resolution, transformed by events" },
+
+    // ── Production Angles (Optional) ──
+    { key: "entryPoint", title: "Entry Point", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The main entrance or approach, how characters arrive" },
+    { key: "exitPoint", title: "Exit Point", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The exit or departure view, leaving perspective" },
+    { key: "hiddenArea", title: "Hidden Area", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "Secret or concealed space within the location" },
+    { key: "dangerZone", title: "Danger Zone", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The most dangerous area or threat point" },
+    { key: "safeHaven", title: "Safe Haven", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "The safest area, refuge point, or comfort zone" },
+    { key: "transitionSpace", title: "Transition Space", subtitle: "Production", isCore: false, profileKey: "" as keyof LocationProfile, description: "Hallway, corridor, path connecting to other locations" },
+
+    // ── Special Conditions (Optional) ──
+    { key: "emergency", title: "Emergency", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "Emergency conditions, red alert lighting, alarms, chaos" },
+    { key: "powerOut", title: "Power Failure", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "No power, emergency backup only, dark with scattered light" },
+    { key: "celebration", title: "Celebration", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "Decorated for celebration, festive, warm inviting atmosphere" },
+    { key: "abandoned", title: "Abandoned", subtitle: "Special", isCore: false, profileKey: "" as keyof LocationProfile, description: "Long abandoned, overgrown, deteriorated, time has passed" },
   ];
 
   // Handle file upload (DOCX or TXT)
@@ -694,28 +745,49 @@ export default function HomePage() {
     return undefined;
   };
 
-  // Generate all visual layers sequentially with rate-limit delays
+  // Build a prompt for a visual layer, using profile data or description
+  const buildLayerPrompt = (layer: typeof VISUAL_LAYERS[number], profile: LocationProfile): string => {
+    const name = expandedItem || "the location";
+    const layoutDesc = (profile.layoutDescription || "").substring(0, 300);
+    const climate = profile.climate || "";
+    const terrain = profile.terrain || "";
+    const mood = (profile as any).defaultEmotionalTone || "";
+    
+    // Use profile-specific prompt if available
+    const profilePrompt = layer.profileKey ? (profile[layer.profileKey] as string) : "";
+    const basePrompt = profilePrompt || layer.description;
+    
+    let locationContext = `Location: ${name}`;
+    if (layoutDesc) locationContext += `. ${layoutDesc}`;
+    if (climate && climate !== "—") locationContext += `. Climate: ${climate}`;
+    if (terrain && terrain !== "—") locationContext += `. Terrain: ${terrain}`;
+    if (mood && mood !== "—") locationContext += `. Mood: ${mood}`;
+    
+    return `CRITICAL: Generate exactly ONE single image. ONE location. ONE viewpoint. This is NOT a collage, NOT a grid, NOT multiple panels, NOT side-by-side. Just ONE standalone image filling the entire frame. ${currentStylePrompt}. ${locationContext}. ${basePrompt}`;
+  };
+
+  // Generate all CORE visual layers sequentially with rate-limit delays
   const handleGenerateAll = async () => {
     if (!currentProfile || demoMode || !expandedItem) return;
+    const coreLayers = VISUAL_LAYERS.filter(l => l.isCore && l.key !== "custom");
     
     // Step 1: Generate the establishing shot (anchor) first
-    const establishingPrompt = currentProfile["visualEstablishing" as keyof LocationProfile] as string;
     let anchorImage = currentVisualImages["establishing"];
-    if (!anchorImage && establishingPrompt) {
-      anchorImage = await handleGenerateVisual("establishing", establishingPrompt) || undefined;
+    if (!anchorImage) {
+      const prompt = buildLayerPrompt(VISUAL_LAYERS[0], currentProfile);
+      anchorImage = await handleGenerateVisual("establishing", prompt) || undefined;
       await delay(8000);
     }
     
-    // Step 2: Generate all other layers using the anchor
-    for (let i = 0; i < VISUAL_LAYERS.length; i++) {
-      const layer = VISUAL_LAYERS[i];
-      if (layer.key === "establishing" || layer.key === "custom") continue;
-      const prompt = currentProfile[layer.profileKey] as string;
-      if (prompt && !currentVisualImages[layer.key]) {
-        await handleGenerateVisual(layer.key, prompt, anchorImage);
-        if (i < VISUAL_LAYERS.length - 1) {
-          await delay(8000);
-        }
+    // Step 2: Generate remaining core layers using the anchor
+    for (let i = 0; i < coreLayers.length; i++) {
+      const layer = coreLayers[i];
+      if (layer.key === "establishing") continue;
+      if (currentVisualImages[layer.key]) continue;
+      const prompt = buildLayerPrompt(layer, currentProfile);
+      await handleGenerateVisual(layer.key, prompt, anchorImage);
+      if (i < coreLayers.length - 1) {
+        await delay(8000);
       }
     }
   };
