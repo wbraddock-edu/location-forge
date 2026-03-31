@@ -3,8 +3,8 @@ import type { Express, Request, Response } from "express";
 import { sqlite } from "./db";
 
 // Location Forge Price IDs — replace with real Stripe price IDs
-const MONTHLY_PRICE_ID = process.env.STRIPE_MONTHLY_PRICE_ID || "price_LOCATION_MONTHLY_TODO";
-const YEARLY_PRICE_ID = process.env.STRIPE_YEARLY_PRICE_ID || "price_LOCATION_YEARLY_TODO";
+const MONTHLY_PRICE_ID = process.env.STRIPE_MONTHLY_PRICE_ID || "price_1TH9iDJW0nlfqRvimjIr0hjq";
+const YEARLY_PRICE_ID = process.env.STRIPE_YEARLY_PRICE_ID || "price_1TH9jvJW0nlfqRvinBqVmKWW";
 
 const TRIAL_DAYS = 7;
 
