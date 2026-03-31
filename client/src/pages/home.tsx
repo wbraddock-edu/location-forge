@@ -45,6 +45,12 @@ import {
   CreditCard,
   FolderOpen,
   User,
+  LogIn,
+  UserPlus,
+  KeyRound,
+  Crown,
+  Zap,
+  Clock,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -996,92 +1002,165 @@ export default function HomePage() {
   // ── Auth Gate ──
   if (appScreen === "auth") {
     return (
-      <div className="min-h-screen bg-[#0a0b0d] flex items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-6">
-          <div className="text-center space-y-2">
-            <img src="./lrap-logo.jpg" alt="LRAP" className="w-12 h-12 rounded-lg mx-auto object-contain" />
-            <h1 className="text-xl font-bold text-white">Location Forge</h1>
-            <p className="text-sm text-gray-500">by Little Red Apple Productions</p>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4" style={{ background: "hsl(225,15%,4%)" }}>
+        <div className="w-full max-w-sm">
+          {/* Logo */}
+          <div className="text-center mb-8">
+            <div className="flex justify-center mb-3">
+              <img src="./location-forge-logo.png" alt="Location Forge" className="w-16 h-16 rounded-xl object-contain" />
+            </div>
+            <h1 className="text-xl font-semibold tracking-wide uppercase" style={{ color: "hsl(163,100%,42%)" }}>LOCATION FORGE</h1>
+            <p className="text-xs font-mono tracking-wider uppercase mt-1" style={{ color: "hsl(220,5%,58%)" }}>
+              Visual Location Development
+            </p>
           </div>
 
-          <div className="bg-[#111214] border border-gray-800 rounded-xl p-6 space-y-4">
-            {authScreen === "login" && (
-              <>
-                <h2 className="text-lg font-semibold text-white text-center">Sign In</h2>
-                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
-                <div className="space-y-3">
-                  <Input placeholder="Email" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
-                  <Input placeholder="Password" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white"
-                    onKeyDown={(e) => e.key === "Enter" && handleLogin()} />
-                  <Button onClick={handleLogin} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
-                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign In"}
-                  </Button>
+          <Card className="border" style={{ background: "hsl(225,12%,14%)", borderColor: "hsl(225,10%,24%)" }}>
+            <CardContent className="p-5">
+              {/* Tab Toggle */}
+              {(authScreen === "login" || authScreen === "register") ? (
+                <div className="flex gap-1 mb-5 p-0.5 rounded-md" style={{ background: "hsl(225,12%,8%)" }}>
+                  <button
+                    className={`flex-1 text-sm py-2 rounded font-medium transition-colors ${
+                      authScreen === "login" ? "bg-[#00d4aa] text-black" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => { setAuthScreen("login"); setAuthError(""); }}
+                    data-testid="tab-login"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    className={`flex-1 text-sm py-2 rounded font-medium transition-colors ${
+                      authScreen === "register" ? "bg-[#00d4aa] text-black" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => { setAuthScreen("register"); setAuthError(""); }}
+                    data-testid="tab-register"
+                  >
+                    Create Account
+                  </button>
                 </div>
-                <div className="flex justify-between text-xs">
-                  <button onClick={() => { setAuthScreen("register"); setAuthError(""); }} className="text-[#00d4aa] hover:underline">Create account</button>
-                  <button onClick={() => { setAuthScreen("forgot"); setAuthError(""); }} className="text-gray-500 hover:text-gray-300">Forgot password?</button>
+              ) : (
+                <div className="mb-5">
+                  <h2 className="text-base font-semibold text-center">Reset Password</h2>
+                  <p className="text-xs text-center mt-1" style={{ color: "hsl(220,5%,68%)" }}>
+                    {authScreen === "forgot" ? "Enter your email to receive a reset token" : "Paste your token and choose a new password"}
+                  </p>
                 </div>
-              </>
-            )}
+              )}
 
-            {authScreen === "register" && (
-              <>
-                <h2 className="text-lg font-semibold text-white text-center">Create Account</h2>
-                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
-                <div className="space-y-3">
-                  <Input placeholder="Display name" value={authDisplayName} onChange={(e) => setAuthDisplayName(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
-                  <Input placeholder="Email" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
-                  <Input placeholder="Password (min 6 chars)" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white"
-                    onKeyDown={(e) => e.key === "Enter" && handleRegister()} />
-                  <Button onClick={handleRegister} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
-                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Account"}
-                  </Button>
-                </div>
-                <button onClick={() => { setAuthScreen("login"); setAuthError(""); }} className="text-xs text-[#00d4aa] hover:underline block text-center">Already have an account? Sign in</button>
-              </>
-            )}
-
-            {authScreen === "forgot" && (
-              <>
-                <h2 className="text-lg font-semibold text-white text-center">Reset Password</h2>
-                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
-                {resetMessage && <p className="text-sm text-[#00d4aa] text-center">{resetMessage}</p>}
-                <div className="space-y-3">
-                  <Input placeholder="Email" type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
-                  <Button onClick={handleForgotPassword} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
-                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Reset Link"}
-                  </Button>
-                </div>
-                {resetToken && (
-                  <div className="space-y-3 pt-2 border-t border-gray-700">
-                    <p className="text-xs text-gray-400">Reset token generated. Enter it below with your new password:</p>
-                    <Input placeholder="Reset token" value={resetToken} onChange={(e) => setResetToken(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white font-mono text-xs" />
-                    <Input placeholder="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
-                    <Button onClick={handleResetPassword} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
-                      {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Reset Password"}
-                    </Button>
+              {/* Auth Form */}
+              <div className="space-y-3">
+                {authScreen === "register" && (
+                  <div>
+                    <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>Display Name</label>
+                    <Input value={authDisplayName} onChange={(e) => setAuthDisplayName(e.target.value)} placeholder="Your name"
+                      className="text-sm h-10" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }} />
                   </div>
                 )}
-                <button onClick={() => { setAuthScreen("login"); setAuthError(""); setResetMessage(""); setResetToken(""); }} className="text-xs text-[#00d4aa] hover:underline block text-center">Back to sign in</button>
-              </>
-            )}
 
-            {authScreen === "reset" && (
-              <>
-                <h2 className="text-lg font-semibold text-white text-center">Set New Password</h2>
-                {authError && <p className="text-sm text-red-400 text-center">{authError}</p>}
-                {resetMessage && <p className="text-sm text-[#00d4aa] text-center">{resetMessage}</p>}
-                <div className="space-y-3">
-                  <Input placeholder="Reset token" value={resetToken} onChange={(e) => setResetToken(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white font-mono text-xs" />
-                  <Input placeholder="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="bg-[#0a0b0d] border-gray-700 text-white" />
-                  <Button onClick={handleResetPassword} disabled={authSubmitting} className="w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold">
-                    {authSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Reset Password"}
-                  </Button>
-                </div>
-                <button onClick={() => { setAuthScreen("login"); setAuthError(""); setResetMessage(""); }} className="text-xs text-[#00d4aa] hover:underline block text-center">Back to sign in</button>
-              </>
-            )}
-          </div>
+                {(authScreen === "login" || authScreen === "register" || authScreen === "forgot") && (
+                  <div>
+                    <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>Email</label>
+                    <Input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@example.com"
+                      className="text-sm h-10" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }} />
+                  </div>
+                )}
+
+                {(authScreen === "login" || authScreen === "register") && (
+                  <div>
+                    <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>Password</label>
+                    <Input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="At least 6 characters"
+                      className="text-sm h-10" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }}
+                      onKeyDown={(e) => e.key === "Enter" && (authScreen === "login" ? handleLogin() : handleRegister())} />
+                  </div>
+                )}
+
+                {authScreen === "forgot" && resetToken && (
+                  <>
+                    <div className="text-xs rounded-md p-2.5" style={{ color: "hsl(220,5%,68%)", background: "hsl(225,15%,8%)" }}>Reset token generated. Enter it below:</div>
+                    <div>
+                      <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>Reset Token</label>
+                      <Input value={resetToken} onChange={(e) => setResetToken(e.target.value)} placeholder="paste-token-here"
+                        className="text-sm h-10 font-mono" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>New Password</label>
+                      <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="At least 6 characters"
+                        className="text-sm h-10" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }} />
+                    </div>
+                  </>
+                )}
+
+                {(authScreen === "reset") && (
+                  <>
+                    <div>
+                      <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>Reset Token</label>
+                      <Input value={resetToken} onChange={(e) => setResetToken(e.target.value)} placeholder="paste-token-here"
+                        className="text-sm h-10 font-mono" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-mono tracking-wider uppercase block mb-1.5" style={{ color: "hsl(220,5%,72%)" }}>New Password</label>
+                      <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="At least 6 characters"
+                        className="text-sm h-10" style={{ background: "hsl(225,12%,10%)", borderColor: "hsl(225,10%,26%)", color: "hsl(0,0%,95%)" }} />
+                    </div>
+                  </>
+                )}
+
+                {authError && (
+                  <div className="text-xs text-red-400 bg-red-400/10 rounded px-3 py-2 flex items-start gap-2">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                <Button
+                  onClick={() => {
+                    if (authScreen === "login") handleLogin();
+                    else if (authScreen === "register") handleRegister();
+                    else if (authScreen === "forgot" && resetToken) handleResetPassword();
+                    else if (authScreen === "forgot") handleForgotPassword();
+                    else if (authScreen === "reset") handleResetPassword();
+                  }}
+                  disabled={authSubmitting}
+                  className="w-full gap-2 mt-2 bg-[#00d4aa] hover:bg-[#00d4aa]/90 text-black font-semibold"
+                >
+                  {authSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : authScreen === "login" ? (
+                    <><LogIn className="w-4 h-4" /> Sign In</>
+                  ) : authScreen === "register" ? (
+                    <><UserPlus className="w-4 h-4" /> Create Account</>
+                  ) : (
+                    <><KeyRound className="w-4 h-4" /> {resetToken ? "Reset Password" : "Send Reset Token"}</>
+                  )}
+                </Button>
+
+                {authScreen === "login" && (
+                  <button
+                    className="w-full text-xs hover:text-foreground transition-colors mt-2" style={{ color: "hsl(220,5%,65%)" }}
+                    onClick={() => { setAuthScreen("forgot"); setAuthError(""); }}
+                  >
+                    Forgot your password?
+                  </button>
+                )}
+                {(authScreen === "forgot" || authScreen === "reset") && (
+                  <button
+                    className="w-full text-xs hover:text-foreground transition-colors mt-2" style={{ color: "hsl(220,5%,65%)" }}
+                    onClick={() => { setAuthScreen("login"); setAuthError(""); setResetMessage(""); setResetToken(""); }}
+                  >
+                    &larr; Back to Sign In
+                  </button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <p className="text-xs text-center mt-6" style={{ color: "hsl(220,5%,55%)" }}>
+            Your locations and visual studies are stored securely per account.
+          </p>
+          <p className="text-xs text-center mt-4" style={{ color: "hsl(220,5%,30%)" }}>
+            Created with AI by <a href="https://littleredappleproductions.com" target="_blank" rel="noopener" style={{ color: "hsla(163,100%,42%,0.6)" }}>Little Red Apple Productions</a> &copy; 2026
+          </p>
         </div>
       </div>
     );
@@ -1094,7 +1173,7 @@ export default function HomePage() {
         <header className="border-b border-gray-800 bg-[#111214]/80 backdrop-blur-sm sticky top-0 z-50">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <img src="./lrap-logo.jpg" alt="LRAP" className="w-8 h-8 rounded-sm object-contain" />
+              <img src="./location-forge-logo.png" alt="Location Forge" className="w-8 h-8 rounded-sm object-contain" />
               <span className="font-bold text-lg text-white">Location Forge</span>
             </div>
             <div className="flex items-center gap-2">
