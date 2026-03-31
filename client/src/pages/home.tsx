@@ -1283,92 +1283,143 @@ export default function HomePage() {
   // ── Account / Subscription Screen ──
   if (appScreen === "account") {
     return (
-      <div className="min-h-screen bg-[#0a0b0d]">
-        <header className="border-b border-gray-800 bg-[#111214]/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setAppScreen("projects")} className="text-gray-400 hover:text-white">
-                <ArrowLeft className="w-4 h-4 mr-1.5" /> Projects
-              </Button>
-            </div>
-            <span className="text-sm text-gray-400">{authUser?.displayName}</span>
-          </div>
-        </header>
+      <div className="min-h-screen flex flex-col" style={{ background: "hsl(225,15%,4%)" }}>
+        <div className="h-12 flex items-center px-4 gap-3" style={{ borderBottom: "1px solid hsl(225,10%,12%)" }}>
+          <button onClick={() => setAppScreen("projects")} className="p-1 rounded" style={{ color: "hsl(220,5%,52%)" }}>
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <span className="text-xs font-mono font-semibold tracking-wider uppercase" style={{ color: "hsl(163,100%,42%)" }}>LOCATION FORGE</span>
+          <span className="text-xs" style={{ color: "hsl(220,5%,30%)" }}>|</span>
+          <span className="text-xs font-mono" style={{ color: "hsl(220,5%,52%)" }}>Account</span>
+          <div className="flex-1" />
+          <button onClick={handleLogout} className="text-[10px] font-mono px-3 py-1 rounded" style={{ color: "hsl(220,5%,52%)", border: "1px solid hsl(225,10%,14%)" }}>Sign Out</button>
+        </div>
 
-        <main className="max-w-lg mx-auto px-4 sm:px-6 py-8 space-y-6">
-          <h2 className="text-xl font-bold text-white">Account</h2>
-
-          <div className="bg-[#111214] border border-gray-800 rounded-xl p-5 space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-[#00d4aa]/20 flex items-center justify-center text-[#00d4aa] font-bold">
-                {authUser?.displayName?.[0]?.toUpperCase() || "?"}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-4 py-8">
+            {/* Profile Card */}
+            <div className="rounded-lg p-6 mb-6" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold" style={{ background: "hsla(163,100%,42%,0.12)", color: "hsl(163,100%,42%)" }}>
+                  {authUser?.displayName?.charAt(0)?.toUpperCase() || "?"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h1 className="text-lg font-semibold" style={{ color: "hsl(180,5%,88%)" }}>{authUser?.displayName}</h1>
+                  <p className="text-sm font-mono" style={{ color: "hsl(220,5%,52%)" }}>{authUser?.email}</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    {subscriptionStatus?.isAdmin ? (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono" style={{ background: "hsla(280,80%,65%,0.08)", color: "hsl(280,80%,65%)" }}>
+                        <Crown className="w-3 h-3" /> Creator
+                      </div>
+                    ) : subscriptionStatus?.subscriptionActive ? (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono" style={{ background: "hsla(163,100%,42%,0.08)", color: "hsl(163,100%,42%)" }}>
+                        <CheckCircle2 className="w-3 h-3" /> Active Subscriber
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono" style={{ background: "hsla(163,100%,42%,0.08)", color: "hsl(163,100%,42%)" }}>
+                        <Clock className="w-3 h-3" /> Trial · {subscriptionStatus?.trialDaysRemaining ?? 7} day{(subscriptionStatus?.trialDaysRemaining ?? 7) !== 1 ? "s" : ""} left
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div>
-                <p className="text-white font-semibold">{authUser?.displayName}</p>
-                <p className="text-sm text-gray-500">{authUser?.email}</p>
-              </div>
             </div>
-          </div>
 
-          <div className="bg-[#111214] border border-gray-800 rounded-xl p-5 space-y-4">
-            <h3 className="text-white font-semibold flex items-center gap-2"><CreditCard className="w-4 h-4 text-[#00d4aa]" /> Subscription</h3>
-            {subscriptionStatus && (
+            {/* Upgrade Section */}
+            {subscriptionStatus && !subscriptionStatus.subscriptionActive && !subscriptionStatus.isAdmin && (
+              <div className="rounded-lg overflow-hidden mb-6" style={{ border: "1px solid hsl(225,10%,12%)" }}>
+                <div className="p-5" style={{ background: "linear-gradient(135deg, hsla(163,100%,42%,0.06), hsla(163,100%,42%,0.02))" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Crown className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <h2 className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>
+                      {!subscriptionStatus.canAccess ? "Your trial has ended" : "Upgrade to Location Forge Pro"}
+                    </h2>
+                  </div>
+                  <p className="text-xs" style={{ color: "hsl(220,5%,60%)" }}>
+                    {!subscriptionStatus.canAccess
+                      ? "Subscribe to continue developing locations with AI-powered profiles and visual studies."
+                      : "Unlock unlimited location development after your trial ends."
+                    }
+                  </p>
+                </div>
+                <div className="p-5">
+                  <div className="text-center mb-4">
+                    <span className="text-3xl font-bold font-mono" style={{ color: "hsl(163,100%,42%)" }}>$29.99</span>
+                    <span className="text-sm font-mono" style={{ color: "hsl(220,5%,40%)" }}>/month</span>
+                  </div>
+                  <div className="space-y-2 mb-5">
+                    {["Unlimited location scanning & development", "AI-powered 10-section location profiles", "6-panel visual location studies", "Multi-project workspace with auto-save", "DOCX export & ZIP download", "10 art styles with reference images"].map((f, i) => (
+                      <div key={i} className="flex items-center gap-2"><CheckCircle2 className="w-3 h-3 shrink-0" style={{ color: "hsl(163,100%,42%)" }} /><span className="text-xs" style={{ color: "hsl(220,5%,65%)" }}>{f}</span></div>
+                    ))}
+                  </div>
+                  <Button className="w-full h-10 font-mono font-semibold text-sm bg-[#00d4aa] hover:bg-[#00d4aa]/90 text-black" onClick={() => handleCheckout("monthly")}>
+                    <Zap className="w-4 h-4 mr-2" /> Subscribe — $29.99/mo
+                  </Button>
+                  <p className="text-[9px] font-mono text-center mt-3" style={{ color: "hsl(220,5%,30%)" }}>Secure payment via Stripe. Cancel anytime.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Google AI API Key */}
+            <div className="rounded-lg p-5 mb-6" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+              <div className="flex items-center gap-2 mb-3">
+                <KeyRound className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                <h2 className="text-xs font-mono font-semibold tracking-wider uppercase" style={{ color: "hsl(220,5%,52%)" }}>Google AI API Key</h2>
+              </div>
+              <p className="text-xs leading-relaxed mb-3" style={{ color: "hsl(220,5%,58%)" }}>
+                Your own Google AI API key is required to generate location profiles and images.
+                Get a key at{" "}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="underline" style={{ color: "hsl(163,100%,42%)" }}>aistudio.google.com</a>.
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 relative">
+                  <input
+                    type={showApiKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="AIza..."
+                    className="w-full h-9 px-3 text-xs font-mono rounded"
+                    style={{ background: "hsl(225,15%,4%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)", outline: "none" }}
+                  />
+                  <button type="button" onClick={() => setShowApiKey(!showApiKey)} className="absolute right-2 top-1/2 -translate-y-1/2" style={{ color: "hsl(220,5%,40%)" }}>
+                    {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+              {apiKey && (
+                <div className="flex items-center gap-1.5 mt-2">
+                  <CheckCircle2 className="w-3 h-3" style={{ color: "hsl(163,100%,42%)" }} />
+                  <span className="text-[10px] font-mono" style={{ color: "hsl(163,100%,42%)" }}>Key configured — auto-saved</span>
+                </div>
+              )}
+            </div>
+
+            {/* Account Details */}
+            <div className="rounded-lg p-5" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+              <h2 className="text-xs font-mono font-semibold tracking-wider uppercase mb-3" style={{ color: "hsl(220,5%,52%)" }}>Account Details</h2>
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-400">Status</span>
-                  <Badge className={subscriptionStatus.isAdmin ? "bg-purple-500/20 text-purple-300" : subscriptionStatus.subscriptionActive ? "bg-green-500/20 text-green-300" : subscriptionStatus.trialActive ? "bg-yellow-500/20 text-yellow-300" : "bg-red-500/20 text-red-300"}>
-                    {subscriptionStatus.isAdmin ? "Admin" : subscriptionStatus.subscriptionActive ? "Active" : subscriptionStatus.trialActive ? `Trial (${subscriptionStatus.trialDaysRemaining}d)` : "Expired"}
-                  </Badge>
+                <div className="flex items-center justify-between py-1.5" style={{ borderBottom: "1px solid hsl(225,10%,10%)" }}>
+                  <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: "hsl(220,5%,40%)" }}>Name</span>
+                  <span className="text-xs font-mono" style={{ color: "hsl(180,5%,88%)" }}>{authUser?.displayName}</span>
                 </div>
-                {subscriptionStatus.plan && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-400">Plan</span>
-                    <span className="text-sm text-white capitalize">{subscriptionStatus.plan}</span>
-                  </div>
-                )}
-                {subscriptionStatus.expiresAt && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-400">Renews</span>
-                    <span className="text-sm text-white">{new Date(subscriptionStatus.expiresAt).toLocaleDateString()}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {subscriptionStatus && !subscriptionStatus.isAdmin && !subscriptionStatus.subscriptionActive && (
-              <div className="space-y-3 pt-3 border-t border-gray-700">
-                <p className="text-sm text-gray-400">Choose a plan to continue:</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => handleCheckout("monthly")}
-                    className="bg-[#0a0b0d] border border-gray-700 rounded-lg p-4 text-left hover:border-[#00d4aa] transition-colors"
-                  >
-                    <p className="text-white font-semibold">Monthly</p>
-                    <p className="text-[#00d4aa] text-lg font-bold mt-1">$9<span className="text-xs text-gray-500 font-normal">/mo</span></p>
-                  </button>
-                  <button
-                    onClick={() => handleCheckout("yearly")}
-                    className="bg-[#0a0b0d] border border-[#00d4aa]/50 rounded-lg p-4 text-left hover:border-[#00d4aa] transition-colors relative"
-                  >
-                    <span className="absolute -top-2 right-2 text-[10px] bg-[#00d4aa] text-black px-2 py-0.5 rounded-full font-semibold">SAVE 33%</span>
-                    <p className="text-white font-semibold">Yearly</p>
-                    <p className="text-[#00d4aa] text-lg font-bold mt-1">$72<span className="text-xs text-gray-500 font-normal">/yr</span></p>
-                  </button>
+                <div className="flex items-center justify-between py-1.5" style={{ borderBottom: "1px solid hsl(225,10%,10%)" }}>
+                  <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: "hsl(220,5%,40%)" }}>Email</span>
+                  <span className="text-xs font-mono" style={{ color: "hsl(180,5%,88%)" }}>{authUser?.email}</span>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: "hsl(220,5%,40%)" }}>Status</span>
+                  <span className="text-xs font-mono" style={{ color: "hsl(163,100%,42%)" }}>{subscriptionStatus?.isAdmin ? "Creator" : subscriptionStatus?.subscriptionActive ? "Active" : `Trial · ${subscriptionStatus?.trialDaysRemaining ?? 7}d`}</span>
                 </div>
               </div>
-            )}
+            </div>
 
-            {subscriptionStatus?.subscriptionActive && (
-              <Button variant="outline" size="sm" onClick={handleManageSubscription} className="w-full border-gray-700 text-gray-300 hover:text-white">
-                Manage Subscription
-              </Button>
-            )}
+            <div className="mt-8 text-center">
+              <p className="text-[10px]" style={{ color: "hsl(220,5%,30%)" }}>
+                Created with AI by <a href="https://littleredappleproductions.com" target="_blank" rel="noopener" style={{ color: "hsla(163,100%,42%,0.6)" }}>Little Red Apple Productions</a> &copy; 2026
+              </p>
+            </div>
           </div>
-
-          <Button variant="outline" size="sm" onClick={handleLogout} className="w-full border-gray-700 text-gray-400 hover:text-white">
-            <LogOut className="w-4 h-4 mr-2" /> Sign Out
-          </Button>
-        </main>
+        </div>
       </div>
     );
   }

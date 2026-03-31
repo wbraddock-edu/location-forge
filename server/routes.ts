@@ -576,6 +576,12 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         createdAt: now,
       }).returning().get();
 
+      // Set trial start and admin role for owner
+      sqlite.prepare("UPDATE users SET trial_started_at = ? WHERE id = ?").run(now, user.id);
+      if (email.toLowerCase().trim() === "designholistically@gmail.com") {
+        sqlite.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(user.id);
+      }
+
       const token = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       db.insert(authSessions).values({ userId: user.id, token, expiresAt, createdAt: now }).run();
@@ -599,6 +605,15 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       if (!bcrypt.compareSync(password, user.passwordHash)) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
+      // Ensure admin role is set for owner on every login
+      if (email.toLowerCase().trim() === "designholistically@gmail.com") {
+        sqlite.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(user.id);
+      }
+      // Ensure trial_started_at is set
+      if (!user.trialStartedAt) {
+        sqlite.prepare("UPDATE users SET trial_started_at = created_at WHERE id = ? AND trial_started_at IS NULL").run(user.id);
+      }
+
       const now = new Date().toISOString();
       const token = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
