@@ -1381,7 +1381,7 @@ export default function HomePage() {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <img
-              src="./lrap-logo.jpg"
+              src="./location-forge-logo.png"
               alt="Little Red Apple Productions"
               className="w-8 h-8 rounded-sm object-contain shrink-0"
             />
