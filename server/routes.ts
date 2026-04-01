@@ -1388,6 +1388,49 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Generate a custom STRICT STYLE LOCK prompt from a user description
+  app.post("/api/generate-style-prompt", async (req: Request, res: Response) => {
+    try {
+      if (!requireActiveSubscription(req, res)) return;
+      const { description, provider, apiKey: userApiKey } = req.body;
+      if (!description || typeof description !== "string") {
+        return res.status(400).json({ error: "Description is required" });
+      }
+      const resolved = resolveApiKey(userApiKey, req.userId!);
+      if (resolved.error) return res.status(403).json({ error: resolved.error });
+
+      const systemPrompt = `You are an expert art director who creates precise visual style directives for AI image generation.
+
+Given a user's description of a desired visual style (which may reference a movie, TV show, video game, art movement, genre, or specific aesthetic), generate a detailed STRICT STYLE LOCK prompt.
+
+The prompt MUST:
+1. Start with "STRICT STYLE LOCK:" followed by a concise style name
+2. Include "Every image MUST" followed by specific rendering requirements
+3. Describe: rendering technique, color palette, lighting approach, texture/material quality, mood, and reference touchpoints
+4. Include "Do NOT switch to" with styles to avoid
+5. End with "All images look like" consistency statement
+6. Be 2-4 sentences total, dense with specific visual direction
+7. Never mention "panel" — always say "image"
+
+Example input: "Blade Runner 2049"
+Example output: "STRICT STYLE LOCK: neo-noir cinematography. Every image MUST use the visual language of Denis Villeneuve's Blade Runner 2049 — desaturated amber and teal color grading, volumetric fog and haze, massive scale with tiny human figures, brutalist architecture bathed in diffused atmospheric light, anamorphic lens flares, Roger Deakins-style chiaroscuro. Do NOT switch to bright saturated colors, clean digital rendering, or flat illustration for any image. All images look like stills from the same dystopian film."
+
+Respond with ONLY the style prompt text, nothing else.`;
+
+      const resolvedProvider = provider === "anthropic" ? "google" : (provider || "google");
+      const result = await callTextAI(
+        resolvedProvider,
+        resolved.key,
+        systemPrompt,
+        `Generate a STRICT STYLE LOCK prompt for this visual style: "${description}"`
+      );
+      return res.json({ prompt: result.trim() });
+    } catch (err: any) {
+      console.error("Style prompt generation error:", err);
+      return res.status(422).json({ error: err.message });
+    }
+  });
+
   // Get saved locations for this visitor
   app.get("/api/locations", (req: Request, res: Response) => {
     const visitorId = req.headers["x-visitor-id"] as string || "anonymous";

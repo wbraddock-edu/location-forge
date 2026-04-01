@@ -285,6 +285,9 @@ export default function HomePage() {
 
   const [generatingLayer, setGeneratingLayer] = useState<string | null>(null);
   const [artStyle, setArtStyle] = useState("cinematic");
+  const [customStylePrompt, setCustomStylePrompt] = useState("");
+  const [customStyleInput, setCustomStyleInput] = useState("");
+  const [generatingStyle, setGeneratingStyle] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
   const [showPromptDialog, setShowPromptDialog] = useState<{ layerKey: string; title: string; prompt: string } | null>(null);
   const [userReferenceImages, setUserReferenceImages] = useState<string[]>([]);
@@ -628,7 +631,32 @@ export default function HomePage() {
   };
 
   // Get the current style prompt text
-  const currentStylePrompt = ART_STYLES.find((s) => s.id === artStyle)?.prompt || "";
+  const currentStylePrompt = artStyle === "custom"
+    ? customStylePrompt
+    : (ART_STYLES.find((s) => s.id === artStyle)?.prompt || "");
+
+  // Generate custom style prompt via AI
+  const handleGenerateStylePrompt = async () => {
+    if (!customStyleInput.trim()) return;
+    setGeneratingStyle(true);
+    try {
+      const res = await apiRequest("POST", "/api/generate-style-prompt", {
+        description: customStyleInput.trim(),
+        provider: provider === "anthropic" ? "google" : provider,
+        apiKey,
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (data.prompt) {
+        setCustomStylePrompt(data.prompt);
+        toast({ title: "Style generated", description: "Custom style directive created from your description." });
+      }
+    } catch (err: any) {
+      toast({ title: "Style generation failed", description: err.message, variant: "destructive" });
+    } finally {
+      setGeneratingStyle(false);
+    }
+  };
 
   // Show prompt for Midjourney
   // Note: prompt passed here already includes style lock from buildLayerPrompt
@@ -975,6 +1003,8 @@ export default function HomePage() {
       if (state.provider) setProvider(state.provider);
       if (state.apiKey) setApiKey(state.apiKey);
       if (state.artStyle) setArtStyle(state.artStyle);
+      if (state.customStylePrompt) setCustomStylePrompt(state.customStylePrompt);
+      if (state.customStyleInput) setCustomStyleInput(state.customStyleInput);
       if (state.detectedLocations) setDetectedLocations(state.detectedLocations);
       if (state.developedItems) setDevelopedItems(state.developedItems);
       if (state.step) setStep(state.step);
@@ -1022,12 +1052,13 @@ export default function HomePage() {
     if (!currentProjectId) return;
     const state: any = {
       sourceText, sourceType, provider, apiKey, artStyle,
+      customStylePrompt, customStyleInput,
       detectedLocations, developedItems, step,
     };
     try {
       await apiRequest("PUT", `/api/projects/${currentProjectId}`, { state });
     } catch {}
-  }, [currentProjectId, sourceText, sourceType, provider, apiKey, artStyle, detectedLocations, developedItems, step]);
+  }, [currentProjectId, sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step]);
 
   // Auto-save on state changes (debounced)
   useEffect(() => {
@@ -1039,7 +1070,7 @@ export default function HomePage() {
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [sourceText, sourceType, provider, apiKey, artStyle, detectedLocations, developedItems, step, appScreen, currentProjectId, saveProjectState]);
+  }, [sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step, appScreen, currentProjectId, saveProjectState]);
 
   // ── Subscription Helpers ──
 
@@ -2200,6 +2231,45 @@ export default function HomePage() {
                     ))}
                   </div>
                 </div>
+                {artStyle === "custom" && (
+                  <div className="w-full mt-2 p-3 rounded-lg" style={{ background: "hsl(225,12%,8%)", border: "1px solid hsl(225,10%,14%)" }}>
+                    <p className="text-[10px] text-muted-foreground mb-2">
+                      Describe a movie, genre, art movement, or aesthetic. AI will generate the style directive.
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={customStyleInput}
+                        onChange={(e) => setCustomStyleInput(e.target.value)}
+                        placeholder='e.g. "Blade Runner 2049" or "dark gothic horror"'
+                        className="flex-1 h-8 text-xs bg-muted/30"
+                        data-testid="input-custom-style"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && customStyleInput.trim()) {
+                            handleGenerateStylePrompt();
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-8 px-3"
+                        onClick={handleGenerateStylePrompt}
+                        disabled={generatingStyle || !customStyleInput.trim()}
+                        data-testid="button-generate-style"
+                      >
+                        {generatingStyle ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                    {customStylePrompt && (
+                      <div className="mt-2 p-2 rounded text-[10px] leading-relaxed" style={{ background: "hsla(163,100%,42%,0.06)", border: "1px solid hsla(163,100%,42%,0.15)", color: "hsl(163,100%,60%)" }}>
+                        {customStylePrompt}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground pt-1">
                   Establishing Shot generates first as the visual anchor — all other layers reference it for consistent architecture, materials, and style.
                   {demoMode && " Connect an API key to generate images."}

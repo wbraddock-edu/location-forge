@@ -185,6 +185,7 @@ export const ART_STYLES = [
   { id: "watercolor", name: "Watercolor", prompt: "STRICT STYLE LOCK: watercolor painting. Every image MUST show loose expressive brushwork, visible paper texture, soft color bleeds and washes, luminous transparent layers. Do NOT switch to digital, photorealistic, or hard-edged styles. All images look like paintings from the same watercolor artist" },
   { id: "oil-painting", name: "Oil Painting", prompt: "STRICT STYLE LOCK: classical oil painting. Every image MUST show rich impasto brushwork, chiaroscuro lighting, warm glazing layers, canvas texture visible, Renaissance-quality portraiture. Do NOT switch to digital, photorealistic photography, or flat illustration. All images look like paintings in the same classical tradition" },
   { id: "concept-art", name: "Concept Art / Matte", prompt: "STRICT STYLE LOCK: entertainment concept art. Every image MUST use painterly digital style with visible brushstrokes, atmospheric perspective, matte painting quality, loose but intentional rendering. Do NOT switch to tight photorealistic or flat 2D styles. All images look like production paintings from the same concept artist" },
+  { id: "custom", name: "Custom / AI-Generated", prompt: "" },
 ] as const;
 
 export type ArtStyleId = typeof ART_STYLES[number]["id"];
