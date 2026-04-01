@@ -256,6 +256,7 @@ export default function HomePage() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [currentProjectName, setCurrentProjectName] = useState("");
+  const [showDashboardMenu, setShowDashboardMenu] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [renamingProjectId, setRenamingProjectId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -1533,10 +1534,57 @@ export default function HomePage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={handleBackToProjects}>
-              <ArrowLeft className="w-4 h-4 mr-1.5" />
-              Projects
-            </Button>
+            {/* Dashboard Menu */}
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDashboardMenu(!showDashboardMenu)}
+                className={showDashboardMenu ? "bg-primary/10 text-primary" : ""}
+                data-testid="button-dashboard-menu"
+              >
+                <LayoutGrid className="w-4 h-4 mr-1.5" />
+                Dashboard
+              </Button>
+              {showDashboardMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowDashboardMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 w-64 z-50 rounded-lg overflow-hidden shadow-xl"
+                    style={{ background: "hsl(225,18%,8%)", border: "1px solid hsl(225,10%,14%)" }}>
+                    {/* Current Project */}
+                    <div className="px-3 pt-3 pb-2">
+                      <p className="text-[9px] font-mono uppercase tracking-wider mb-1.5" style={{ color: "hsl(220,5%,40%)" }}>Current Project</p>
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded" style={{ background: "hsla(163,100%,42%,0.06)" }}>
+                        <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "hsl(163,100%,42%)" }} />
+                        <span className="text-xs font-mono truncate" style={{ color: "hsl(163,100%,42%)" }}>{currentProjectName}</span>
+                      </div>
+                    </div>
+                    <div style={{ borderTop: "1px solid hsl(225,10%,12%)" }} />
+                    {/* All Projects */}
+                    <button
+                      onClick={() => { setShowDashboardMenu(false); handleBackToProjects(); }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-mono transition-colors hover:bg-[hsl(225,12%,12%)]"
+                      style={{ color: "hsl(220,5%,65%)" }}
+                      data-testid="button-all-projects"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      All Projects
+                      <span className="ml-auto text-[10px] font-mono" style={{ color: "hsl(220,5%,40%)" }}>{projects.length}</span>
+                    </button>
+                    {/* New Project shortcut */}
+                    <button
+                      onClick={() => { setShowDashboardMenu(false); handleBackToProjects(); }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-mono transition-colors hover:bg-[hsl(225,12%,12%)]"
+                      style={{ color: "hsl(220,5%,65%)", borderTop: "1px solid hsl(225,10%,12%)" }}
+                      data-testid="button-new-project-menu"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      New Project
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             {step === "results" && (
               <Button variant="ghost" size="sm" onClick={handleBackToDashboard} data-testid="button-back-dashboard">
                 Dashboard
