@@ -819,9 +819,10 @@ export default function HomePage() {
       return `CRITICAL: Generate exactly ONE single image. ONE location. ONE viewpoint. This is NOT a collage, NOT a grid, NOT multiple panels, NOT side-by-side. Just ONE standalone image filling the entire frame. ${currentStylePrompt}. ${ctxBase}`;
     }
 
-    // Use profile-specific prompt if available (non-empty profileKey)
-    const profilePrompt = layer.profileKey ? (profile[layer.profileKey] as string) : "";
-    const basePrompt = (profilePrompt && profilePrompt !== "—" && profilePrompt.length > 5) ? profilePrompt : layer.description;
+    // Always use the panel's own description as the primary prompt.
+    // Profile data is appended as context only — never as the main directive,
+    // because profile visual fields often describe multi-condition studies that cause composite images.
+    const basePrompt = layer.description;
     
     let locationContext = `Location: ${name}`;
     if (layoutDesc) locationContext += `. ${layoutDesc}`;
