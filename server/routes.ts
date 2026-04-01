@@ -1437,4 +1437,106 @@ Respond with ONLY the style prompt text, nothing else.`;
     const locs = storage.getLocationsByVisitor(visitorId);
     return res.json(locs);
   });
+
+  // ── Support Tickets ──
+
+  // POST /api/support/ticket — Submit a support ticket (any authenticated user)
+  app.post("/api/support/ticket", async (req: Request, res: Response) => {
+    try {
+      const user = sqlite.prepare("SELECT * FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user) return res.status(401).json({ error: "Not authenticated" });
+
+      const { category, subject, message, errorContext } = req.body;
+      if (!subject || !message) {
+        return res.status(400).json({ error: "subject and message are required" });
+      }
+
+      const now = new Date().toISOString();
+      const result = sqlite.prepare(
+        `INSERT INTO support_tickets (user_id, user_email, category, subject, message, error_context, status, priority, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'open', 'normal', ?)`
+      ).run(
+        req.userId!,
+        user.email,
+        category || "general",
+        subject.trim(),
+        message.trim(),
+        errorContext || null,
+        now
+      );
+
+      return res.json({ ok: true, ticketId: result.lastInsertRowid });
+    } catch (err: any) {
+      console.error("Support ticket error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/support/tickets — List current user's tickets
+  app.get("/api/support/tickets", (req: Request, res: Response) => {
+    try {
+      const tickets = sqlite.prepare(
+        `SELECT id, category, subject, message, error_context, status, priority, created_at
+         FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC`
+      ).all(req.userId!) as any[];
+
+      return res.json({ tickets });
+    } catch (err: any) {
+      console.error("List tickets error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/support/ai-chat — AI support assistant (paid subscribers + admin only)
+  app.post("/api/support/ai-chat", async (req: Request, res: Response) => {
+    try {
+      const user = sqlite.prepare("SELECT * FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user) return res.status(401).json({ error: "Not authenticated" });
+
+      // Only paid subscribers and admins can use AI chat
+      if (!isAdmin(user) && !hasActiveSubscription(user)) {
+        return res.status(403).json({ error: "subscription_required", message: "AI Support Assistant is available to paid subscribers. Please upgrade or use email support." });
+      }
+
+      const { question, apiKey: userApiKey, provider: userProvider } = req.body;
+      if (!question || typeof question !== "string") {
+        return res.status(400).json({ error: "question is required" });
+      }
+
+      const resolved = resolveApiKey(userApiKey, req.userId!);
+      if (resolved.error) return res.status(403).json({ error: resolved.error });
+
+      const systemPrompt = `You are the AI Support Assistant for Location Forge, a professional location development tool by Little Red Apple Productions.
+
+You help users with:
+- How to use Location Forge features (scanning, profiling, 36-panel visual studies, export)
+- Troubleshooting errors (502 errors, image generation failures, API key issues)
+- Understanding the 6 visual study tabs and 11 art styles
+- The anchor system (Establishing Shot references)
+- Project management
+- Subscription and billing questions
+
+Common issues and solutions:
+- 502 Error: Server temporarily overloaded. Wait 30 seconds and retry. Try one image at a time.
+- Image shows collage/grid: This should be fixed now. If it recurs, try regenerating the panel.
+- Blank images: AI content filter may have blocked. Try different art style or simpler description.
+- Slow generation: 10-30 seconds per image is normal.
+- Trial expired: Subscribe at $29.99/month or $299/year.
+
+Be concise and helpful. If you can't resolve the issue, suggest the email support form.`;
+
+      const resolvedProvider = (userProvider && userProvider !== "anthropic") ? userProvider : "google";
+      const answer = await callTextAI(
+        resolvedProvider,
+        resolved.key,
+        systemPrompt,
+        question
+      );
+
+      return res.json({ answer: answer.trim() });
+    } catch (err: any) {
+      console.error("AI support chat error:", err);
+      return res.status(422).json({ error: err.message });
+    }
+  });
 }

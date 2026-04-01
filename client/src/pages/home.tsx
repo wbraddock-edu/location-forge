@@ -57,6 +57,9 @@ import {
   Ruler,
   Heart,
   Clapperboard,
+  MessageCircle,
+  Send,
+  TicketCheck,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -304,6 +307,17 @@ export default function HomePage() {
   // Dashboard filters
   const [filterImportance, setFilterImportance] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"importance" | "name">("importance");
+
+  // Support section state
+  const [supportTab, setSupportTab] = useState<"ai" | "email" | "tickets">("email");
+  const [supportQuestion, setSupportQuestion] = useState("");
+  const [askingSupport, setAskingSupport] = useState(false);
+  const [supportCategory, setSupportCategory] = useState("general");
+  const [supportSubject, setSupportSubject] = useState("");
+  const [supportMessage, setSupportMessage] = useState("");
+  const [submittingTicket, setSubmittingTicket] = useState(false);
+  const [supportTickets, setSupportTickets] = useState<any[]>([]);
+  const [chatHistory, setChatHistory] = useState<Array<{role: "user" | "ai", text: string}>>([]);
 
   const currentProvider = PROVIDERS.find((p) => p.id === provider)!;
 
@@ -1094,6 +1108,58 @@ export default function HomePage() {
     }
   };
 
+  // Support handlers
+  const handleAskSupport = async () => {
+    if (!supportQuestion.trim() || askingSupport) return;
+    const question = supportQuestion.trim();
+    setChatHistory(prev => [...prev, { role: "user", text: question }]);
+    setSupportQuestion("");
+    setAskingSupport(true);
+    try {
+      const res = await apiRequest("POST", "/api/support/ai-chat", {
+        question,
+        apiKey: apiKey || undefined,
+        provider: provider || "google",
+      });
+      const data = await res.json();
+      setChatHistory(prev => [...prev, { role: "ai", text: data.answer }]);
+    } catch (err: any) {
+      setChatHistory(prev => [...prev, { role: "ai", text: `Error: ${err.message?.replace(/^\d+:\s*/, "") || "Failed to get answer"}` }]);
+    } finally {
+      setAskingSupport(false);
+    }
+  };
+
+  const handleSubmitTicket = async () => {
+    if (!supportSubject.trim() || !supportMessage.trim() || submittingTicket) return;
+    setSubmittingTicket(true);
+    try {
+      const res = await apiRequest("POST", "/api/support/ticket", {
+        category: supportCategory,
+        subject: supportSubject.trim(),
+        message: supportMessage.trim(),
+      });
+      const data = await res.json();
+      toast({ title: "Ticket submitted", description: `Your support ticket has been received. Ticket #${data.ticketId}` });
+      setSupportSubject("");
+      setSupportMessage("");
+      setSupportCategory("general");
+      loadSupportTickets();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message?.replace(/^\d+:\s*/, "") || "Failed to submit ticket", variant: "destructive" });
+    } finally {
+      setSubmittingTicket(false);
+    }
+  };
+
+  const loadSupportTickets = async () => {
+    try {
+      const res = await apiRequest("GET", "/api/support/tickets");
+      const data = await res.json();
+      setSupportTickets(data.tickets || []);
+    } catch {}
+  };
+
   // Dashboard helpers
   const developedCount = Object.keys(developedItems).length;
   const totalCount = detectedLocations.length;
@@ -1433,8 +1499,24 @@ export default function HomePage() {
                   a: "Yes — export individual locations or all developed locations as Word documents (.docx). Download all visual images as a ZIP file."
                 },
                 {
+                  q: "Why am I getting 502 errors?",
+                  a: "A 502 error means the server is temporarily overloaded, usually from processing large images. Wait 30 seconds and try again. If it persists: try generating one image at a time instead of 'Generate All', use a simpler art style, or reduce the number of reference images. If the issue continues, submit a support ticket from your Account page."
+                },
+                {
+                  q: "What should I do if image generation fails?",
+                  a: "First, check your API key is valid — Google AI keys start with 'AIza' and OpenAI keys start with 'sk-'. If using the trial, the platform key may be rate-limited; wait a minute and retry. Try switching to a different art style or simplifying the location description. If you see repeated failures, go to Account > Support to report the issue."
+                },
+                {
                   q: "What happens after the free trial?",
                   a: "After the 7-day free trial, subscribe at $29.99/month or $299/year to continue. Your projects and data are preserved."
+                },
+                {
+                  q: "Why do I need my own API key on the paid plan?",
+                  a: "After your 7-day trial, you'll need your own API key from OpenAI or Google AI. This is by design — it keeps your subscription cost low ($29.99/mo vs $100+/mo if we bundled API costs) and is actually more cost-effective for you. Most users spend $5-15/month on API usage directly, which is far less than what a bundled service would charge. You only pay for what you use, and you maintain full control over your API spending."
+                },
+                {
+                  q: "Is my API key stored?",
+                  a: "No. Your API key is sent directly to the provider for each request and is never stored on our servers."
                 },
               ].map((item, i) => (
                 <details key={i} className="group rounded-lg" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
@@ -1618,6 +1700,205 @@ export default function HomePage() {
                   <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: "hsl(220,5%,40%)" }}>Status</span>
                   <span className="text-xs font-mono" style={{ color: "hsl(163,100%,42%)" }}>{subscriptionStatus?.isAdmin ? "Creator" : subscriptionStatus?.subscriptionActive ? "Active" : `Trial · ${subscriptionStatus?.trialDaysRemaining ?? 7}d`}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Support Section */}
+            <div className="rounded-lg overflow-hidden mt-6" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+              <div className="flex items-center gap-2 px-5 pt-5 pb-3">
+                <MessageCircle className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                <h2 className="text-xs font-mono font-semibold tracking-wider uppercase" style={{ color: "hsl(220,5%,52%)" }}>Support</h2>
+              </div>
+
+              {/* Tab bar */}
+              <div className="flex" style={{ borderBottom: "1px solid hsl(225,10%,12%)" }}>
+                {([
+                  { id: "ai" as const, label: "AI Assistant", locked: !subscriptionStatus?.isAdmin && !subscriptionStatus?.subscriptionActive },
+                  { id: "email" as const, label: "Email Support", locked: false },
+                  { id: "tickets" as const, label: "My Tickets", locked: false },
+                ]).map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => { setSupportTab(tab.id); if (tab.id === "tickets") loadSupportTickets(); }}
+                    className="flex-1 text-[10px] font-mono py-2.5 transition-colors"
+                    style={{
+                      color: supportTab === tab.id ? "hsl(163,100%,42%)" : "hsl(220,5%,45%)",
+                      borderBottom: supportTab === tab.id ? "2px solid hsl(163,100%,42%)" : "2px solid transparent",
+                      background: "transparent",
+                    }}
+                  >
+                    {tab.label}{tab.locked ? " 🔒" : ""}
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-5">
+                {/* AI Assistant Tab */}
+                {supportTab === "ai" && (
+                  <div>
+                    {(!subscriptionStatus?.isAdmin && !subscriptionStatus?.subscriptionActive) ? (
+                      <div className="text-center py-6">
+                        <Crown className="w-8 h-8 mx-auto mb-3" style={{ color: "hsl(163,100%,42%)" }} />
+                        <p className="text-xs mb-1" style={{ color: "hsl(180,5%,88%)" }}>AI Support Assistant</p>
+                        <p className="text-[11px] mb-4" style={{ color: "hsl(220,5%,55%)" }}>Available to paid subscribers. Upgrade to get instant AI-powered help.</p>
+                        <button
+                          onClick={() => handleCheckout("monthly")}
+                          className="text-xs font-mono px-4 py-2 rounded"
+                          style={{ background: "hsl(163,100%,42%)", color: "#000" }}
+                        >Upgrade — $29.99/mo</button>
+                      </div>
+                    ) : (
+                      <div>
+                        {/* Chat history */}
+                        {chatHistory.length === 0 && (
+                          <div className="text-center py-4 mb-4">
+                            <p className="text-[11px]" style={{ color: "hsl(220,5%,50%)" }}>Ask a question about Location Forge — features, troubleshooting, errors, billing.</p>
+                          </div>
+                        )}
+                        {chatHistory.length > 0 && (
+                          <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
+                            {chatHistory.map((msg, i) => (
+                              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                                <div
+                                  className="max-w-[85%] rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+                                  style={{
+                                    background: msg.role === "user" ? "hsla(163,100%,42%,0.12)" : "hsl(225,15%,9%)",
+                                    color: msg.role === "user" ? "hsl(163,100%,42%)" : "hsl(180,5%,88%)",
+                                    border: "1px solid " + (msg.role === "user" ? "hsla(163,100%,42%,0.2)" : "hsl(225,10%,14%)"),
+                                  }}
+                                >
+                                  {msg.text}
+                                </div>
+                              </div>
+                            ))}
+                            {askingSupport && (
+                              <div className="flex justify-start">
+                                <div className="px-3 py-2 rounded-lg" style={{ background: "hsl(225,15%,9%)", border: "1px solid hsl(225,10%,14%)" }}>
+                                  <Loader2 className="w-3 h-3 animate-spin" style={{ color: "hsl(163,100%,42%)" }} />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <Input
+                            value={supportQuestion}
+                            onChange={(e) => setSupportQuestion(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAskSupport(); } }}
+                            placeholder="Ask about features, errors, or billing..."
+                            className="flex-1 h-9 text-xs font-mono"
+                            style={{ background: "hsl(225,15%,4%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}
+                            disabled={askingSupport}
+                          />
+                          <button
+                            onClick={handleAskSupport}
+                            disabled={askingSupport || !supportQuestion.trim()}
+                            className="h-9 w-9 flex items-center justify-center rounded shrink-0"
+                            style={{ background: "hsl(163,100%,42%)", color: "#000", opacity: (askingSupport || !supportQuestion.trim()) ? 0.5 : 1 }}
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Email Support Tab */}
+                {supportTab === "email" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[10px] font-mono uppercase tracking-wider block mb-1" style={{ color: "hsl(220,5%,40%)" }}>Category</label>
+                      <Select value={supportCategory} onValueChange={setSupportCategory}>
+                        <SelectTrigger className="h-9 text-xs font-mono" style={{ background: "hsl(225,15%,4%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="general">General Question</SelectItem>
+                          <SelectItem value="bug">Bug Report</SelectItem>
+                          <SelectItem value="image_generation">Image Generation Issue</SelectItem>
+                          <SelectItem value="502_error">502 / Server Error</SelectItem>
+                          <SelectItem value="billing">Billing / Subscription</SelectItem>
+                          <SelectItem value="api_key">API Key Issue</SelectItem>
+                          <SelectItem value="feature_request">Feature Request</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-mono uppercase tracking-wider block mb-1" style={{ color: "hsl(220,5%,40%)" }}>Subject</label>
+                      <Input
+                        value={supportSubject}
+                        onChange={(e) => setSupportSubject(e.target.value)}
+                        placeholder="Brief description of your issue"
+                        className="h-9 text-xs font-mono"
+                        style={{ background: "hsl(225,15%,4%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-mono uppercase tracking-wider block mb-1" style={{ color: "hsl(220,5%,40%)" }}>Message</label>
+                      <Textarea
+                        value={supportMessage}
+                        onChange={(e) => setSupportMessage(e.target.value)}
+                        placeholder="Describe your issue in detail. Include any error messages you saw."
+                        rows={5}
+                        className="text-xs font-mono resize-none"
+                        style={{ background: "hsl(225,15%,4%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}
+                      />
+                    </div>
+                    <button
+                      onClick={handleSubmitTicket}
+                      disabled={submittingTicket || !supportSubject.trim() || !supportMessage.trim()}
+                      className="w-full h-9 text-xs font-mono font-semibold rounded flex items-center justify-center gap-2"
+                      style={{
+                        background: "hsl(163,100%,42%)",
+                        color: "#000",
+                        opacity: (submittingTicket || !supportSubject.trim() || !supportMessage.trim()) ? 0.5 : 1,
+                      }}
+                    >
+                      {submittingTicket ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      {submittingTicket ? "Submitting..." : "Submit Ticket"}
+                    </button>
+                    <p className="text-[10px] text-center" style={{ color: "hsl(220,5%,35%)" }}>We respond within 24–48 hours.</p>
+                  </div>
+                )}
+
+                {/* My Tickets Tab */}
+                {supportTab === "tickets" && (
+                  <div>
+                    {supportTickets.length === 0 ? (
+                      <div className="text-center py-6">
+                        <TicketCheck className="w-8 h-8 mx-auto mb-3" style={{ color: "hsl(220,5%,30%)" }} />
+                        <p className="text-xs" style={{ color: "hsl(220,5%,45%)" }}>No support tickets yet.</p>
+                        <button
+                          onClick={() => setSupportTab("email")}
+                          className="text-[10px] font-mono mt-2 underline"
+                          style={{ color: "hsl(163,100%,42%)" }}
+                        >Submit your first ticket</button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {supportTickets.map((ticket) => (
+                          <div key={ticket.id} className="rounded p-3" style={{ background: "hsl(225,15%,4%)", border: "1px solid hsl(225,10%,10%)" }}>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[10px] font-mono font-semibold" style={{ color: "hsl(180,5%,88%)" }}>#{ticket.id} — {ticket.subject}</span>
+                              <span
+                                className="text-[9px] font-mono px-2 py-0.5 rounded-full"
+                                style={{
+                                  background: ticket.status === "open" ? "hsla(163,100%,42%,0.1)" : "hsla(220,5%,40%,0.1)",
+                                  color: ticket.status === "open" ? "hsl(163,100%,42%)" : "hsl(220,5%,55%)",
+                                }}
+                              >
+                                {ticket.status}
+                              </span>
+                            </div>
+                            <p className="text-[10px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>{ticket.message.substring(0, 120)}{ticket.message.length > 120 ? "..." : ""}</p>
+                            <p className="text-[9px] mt-1 font-mono" style={{ color: "hsl(220,5%,35%)" }}>{ticket.category} · {new Date(ticket.created_at).toLocaleDateString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

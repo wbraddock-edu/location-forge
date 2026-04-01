@@ -59,6 +59,18 @@ sqlite.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS support_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    user_email TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    subject TEXT NOT NULL,
+    message TEXT NOT NULL,
+    error_context TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    priority TEXT NOT NULL DEFAULT 'normal',
+    created_at TEXT NOT NULL
+  );
 `);
 
 // Add user_id column to sessions if it doesn't exist (migration for existing DBs)
