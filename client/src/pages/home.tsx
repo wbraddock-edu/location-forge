@@ -755,9 +755,8 @@ export default function HomePage() {
 
   // Generate a single visual layer — now updates developedItems
   const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: string) => {
-    if (!prompt || demoMode || !expandedItem) {
+    if (!prompt || !expandedItem) {
       if (!prompt) toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
-      if (!apiKey) toast({ title: "No API key", description: "Enter your API key to generate images.", variant: "destructive" });
       return;
     }
     setGeneratingLayer(layerKey);
@@ -824,7 +823,7 @@ export default function HomePage() {
 
   // Generate all layers in the current visual tab sequentially with rate-limit delays
   const handleGenerateAll = async () => {
-    if (!currentProfile || demoMode || !expandedItem) return;
+    if (!currentProfile || !expandedItem) return;
     const tabLayers = VISUAL_LAYERS.filter(l => l.category === visualTab && l.key !== "custom");
     
     // Step 1: Use or generate the establishing shot (anchor) first if not present
@@ -2553,18 +2552,16 @@ export default function HomePage() {
                         Download All
                       </Button>
                     )}
-                    {!demoMode && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={handleGenerateAll}
-                        disabled={!!generatingLayer}
-                        data-testid="button-generate-all"
-                      >
-                        <Wand2 className="w-3.5 h-3.5 mr-1.5" />
-                        Generate Tab ({PANEL_CATEGORIES.find(c => c.id === visualTab)?.label ?? ""})
-                      </Button>
-                    )}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleGenerateAll}
+                      disabled={!!generatingLayer}
+                      data-testid="button-generate-all"
+                    >
+                      <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+                      Generate Tab ({PANEL_CATEGORIES.find(c => c.id === visualTab)?.label ?? ""})
+                    </Button>
                   </div>
                 </div>
                 {/* Style Selector */}
@@ -2640,7 +2637,7 @@ export default function HomePage() {
                 )}
                 <p className="text-xs text-muted-foreground pt-1">
                   Establishing Shot generates first as the visual anchor — all other layers reference it for consistent architecture, materials, and style.
-                  {demoMode && " Connect an API key to generate images."}
+                  
                 </p>
               </CardHeader>
               <CardContent className="p-0">
@@ -2773,34 +2770,32 @@ export default function HomePage() {
                                   </Button>
                                 )}
                                 {/* Generate */}
-                                {!demoMode && (
-                                  <Button
-                                    variant={isCustom && customPrompt ? "default" : "ghost"}
-                                    size="icon"
-                                    className="w-7 h-7"
-                                    onClick={() => {
-                                      if (isCustom && !customPrompt) {
-                                        toast({ title: "Enter a description", description: "Type what you want to see in the text area above.", variant: "destructive" });
-                                        return;
-                                      }
-                                      if (!currentProfile) return;
-                                      const builtPrompt = buildLayerPrompt(layer, currentProfile);
-                                      if (!builtPrompt) {
-                                        toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
-                                        return;
-                                      }
-                                      handleGenerateVisual(layer.key, builtPrompt);
-                                    }}
-                                    disabled={!!generatingLayer}
-                                    data-testid={`button-generate-${layer.key}`}
-                                  >
-                                    {isGenerating ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <Wand2 className="w-3.5 h-3.5" />
-                                    )}
+                                <Button
+                                  variant={isCustom && customPrompt ? "default" : "ghost"}
+                                  size="icon"
+                                  className="w-7 h-7"
+                                  onClick={() => {
+                                    if (isCustom && !customPrompt) {
+                                      toast({ title: "Enter a description", description: "Type what you want to see in the text area above.", variant: "destructive" });
+                                      return;
+                                    }
+                                    if (!currentProfile) return;
+                                    const builtPrompt = buildLayerPrompt(layer, currentProfile);
+                                    if (!builtPrompt) {
+                                      toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
+                                      return;
+                                    }
+                                    handleGenerateVisual(layer.key, builtPrompt);
+                                  }}
+                                  disabled={!!generatingLayer}
+                                  data-testid={`button-generate-${layer.key}`}
+                                >
+                                  {isGenerating ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Wand2 className="w-3.5 h-3.5" />
+                                  )}
                                   </Button>
-                                )}
                               </div>
                             </div>
                           </div>
