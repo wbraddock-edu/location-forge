@@ -1396,6 +1396,93 @@ export default function HomePage() {
               ))}
             </div>
           )}
+
+          {/* FAQ & Cross-Promotion */}
+          <div className="mt-12 mb-8">
+            <h2 className="text-sm font-mono font-semibold tracking-wider uppercase mb-4" style={{ color: "hsl(220,5%,52%)" }}>
+              Frequently Asked Questions
+            </h2>
+            <div className="space-y-2">
+              {[
+                {
+                  q: "What is Location Forge?",
+                  a: "Location Forge is an AI-powered location development tool for writers, screenwriters, filmmakers, and game designers. Upload a manuscript or describe a world, and AI will scan for locations, build detailed 10-section profiles covering geography, history, mood, and production notes, then generate visual studies from professional camera angles."
+                },
+                {
+                  q: "What visual studies can I generate?",
+                  a: "Location Forge offers 36 visual panels organized into 6 tabs: Camera Shots (establishing, wide, medium, close-up, bird's eye, worm's eye, dutch angle), Lighting & Time (golden hour, blue hour, night, backlit), Weather & Atmosphere (rain, fog, storm, snow), Production Design (architectural detail, interior, entry, key props), Mood & Narrative (empty, populated, aftermath, danger zone), and Director's Vision (custom shots, emergency, power failure, decades later)."
+                },
+                {
+                  q: "How does the anchor system work?",
+                  a: "The Establishing Shot generates first as the visual anchor. All subsequent panels reference it to maintain consistent architecture, materials, color palette, and environmental details across every generated image."
+                },
+                {
+                  q: "What art styles are available?",
+                  a: "Choose from 11 art styles: Cinematic Concept Art, Photorealistic, Pixar/3D Animation, Anime, 3D Render/Game Art, 2D Illustration, Comic Book, Watercolor, Oil Painting, Concept Art/Matte, and Custom/AI-Generated — where you describe any movie, genre, or aesthetic and AI creates the style directive."
+                },
+                {
+                  q: "What file formats can I upload?",
+                  a: "Location Forge accepts .docx (Word) and .txt files. You can also paste text directly."
+                },
+                {
+                  q: "What AI providers are supported?",
+                  a: "Google AI (Gemini), OpenAI (GPT-4 + DALL-E 3), and Anthropic (Claude) for text analysis. Image generation uses Google AI or OpenAI. During your 7-day trial, the platform API key covers all generation."
+                },
+                {
+                  q: "Can I export my work?",
+                  a: "Yes — export individual locations or all developed locations as Word documents (.docx). Download all visual images as a ZIP file."
+                },
+                {
+                  q: "What happens after the free trial?",
+                  a: "After the 7-day free trial, subscribe at $29.99/month or $299/year to continue. Your projects and data are preserved."
+                },
+              ].map((item, i) => (
+                <details key={i} className="group rounded-lg" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <summary className="flex items-center justify-between px-4 py-3 cursor-pointer text-xs font-medium select-none" style={{ color: "hsl(180,5%,88%)" }}>
+                    {item.q}
+                    <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90 shrink-0 ml-2" style={{ color: "hsl(220,5%,40%)" }} />
+                  </summary>
+                  <div className="px-4 pb-3 text-xs leading-relaxed" style={{ color: "hsl(220,5%,65%)" }}>
+                    {item.a}
+                  </div>
+                </details>
+              ))}
+            </div>
+
+            {/* Cross-Promotion */}
+            <div className="mt-8">
+              <h2 className="text-sm font-mono font-semibold tracking-wider uppercase mb-4" style={{ color: "hsl(220,5%,52%)" }}>
+                The Forge Suite
+              </h2>
+              <p className="text-xs mb-4" style={{ color: "hsl(220,5%,55%)" }}>
+                Location Forge is part of a complete production toolkit by Little Red Apple Productions.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <a href="https://character.littleredappleproductions.com" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <User className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Character Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    AI-powered character development. Scan manuscripts for characters, build detailed profiles, and generate visual portrait studies across 11 art styles.
+                  </p>
+                </a>
+                <a href="https://manuscript.littleredappleproductions.com" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Manuscript Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    Production readiness analysis for screenplays and manuscripts. AI evaluates story structure, character arcs, pacing, dialogue, and generates a comprehensive production dashboard.
+                  </p>
+                </a>
+              </div>
+            </div>
+          </div>
         </main>
       </div>
     );
