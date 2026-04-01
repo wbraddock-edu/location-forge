@@ -1514,6 +1514,22 @@ export default function HomePage() {
                   a: "After your 7-day trial, you'll need your own API key from OpenAI or Google AI. This is by design — it keeps your subscription cost low ($29.99/mo vs $100+/mo if we bundled API costs) and is actually more cost-effective for you. Most users spend $5-15/month on API usage directly, which is far less than what a bundled service would charge. You only pay for what you use, and you maintain full control over your API spending."
                 },
                 {
+                  q: "How many images can I generate during the free trial?",
+                  a: "During your 7-day trial, image generation uses our shared platform API key (Google AI). You can typically generate 25-50 images per day, but availability depends on overall platform usage since the quota is shared across all trial users. If you hit a rate limit, wait a few minutes and try again. For the most reliable experience, generate images one at a time rather than 'Generate All'. After your trial, using your own API key gives you a dedicated quota with no sharing."
+                },
+                {
+                  q: "What are the rate limits with my own API key?",
+                  a: "Rate limits depend on your provider and tier level. Google AI free tier: ~500 images/day, 10-15 per minute, resets at midnight Pacific. Google AI Tier 1 (link a billing account — no upfront cost, no minimum spend): 2,000+ images/day, 150-300 per minute — a massive upgrade for $0. Google AI Tier 2 ($250 cumulative spend): 1,000+ per minute, essentially unlimited for Forge use. Cost is ~$0.02-0.04 per image. OpenAI DALL-E 3: Tier 1 ($5 paid) = 5 images/min, Tier 2 ($50) = 7/min, Tier 4 ($250) = 15/min. Cost is $0.04-0.12 per image. We recommend Google AI for the best value — the free tier alone covers most users."
+                },
+                {
+                  q: "Which API provider should I choose?",
+                  a: "Google AI (Gemini) is the best value for most users. The free tier gives you ~500 images/day at no cost, and linking a billing account (no upfront payment) jumps you to 2,000+/day. Image cost is $0.02-0.04 each. OpenAI (DALL-E 3) produces excellent results but is more expensive ($0.04-0.12/image) with stricter rate limits (5-15 images/minute even on high tiers). For heavy use, Google AI Tier 1 is the clear winner — unlimited-feeling generation for pennies per image."
+                },
+                {
+                  q: "How can I maximize my image generation?",
+                  a: "Generate the Establishing Shot first — it becomes the visual anchor for all other panels, so getting it right saves regeneration time. Use 'Generate All' during off-peak hours (evening/night Pacific Time) for better availability. If you're on Google AI's free tier, linking a Cloud billing account (no upfront cost) gives you 4x the daily quota. Cinematic and Concept Art styles tend to produce the most consistent single-image results."
+                },
+                {
                   q: "Is my API key stored?",
                   a: "No. Your API key is sent directly to the provider for each request and is never stored on our servers."
                 },
