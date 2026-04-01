@@ -1475,7 +1475,31 @@ export default function HomePage() {
           ) : projects.length === 0 ? (
             <div className="text-center py-16 space-y-3">
               <FolderOpen className="w-12 h-12 text-gray-600 mx-auto" />
-              <p className="text-gray-500">No projects yet. Create one to get started.</p>
+              <p className="text-gray-500 mb-4">No projects yet. Create one to get started.</p>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const res = await apiRequest("POST", "/api/projects", { name: "Demo — 2001 / Dune / Terminator" });
+                    const data = await res.json();
+                    setDemoMode(true);
+                    setDetectedLocations(DEMO_LOCATIONS);
+                    setDevelopedItems({});
+                    setExpandedItem(null);
+                    setStep("dashboard");
+                    setCurrentProjectId(data.id);
+                    setCurrentProjectName("Demo — 2001 / Dune / Terminator");
+                    setAppScreen("app");
+                  } catch {
+                    toast({ title: "Failed to create demo project", variant: "destructive" });
+                  }
+                }}
+                className="border-[#00d4aa]/30 text-[#00d4aa] hover:bg-[#00d4aa]/10"
+                data-testid="button-try-demo"
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                Try Demo with Sample Data
+              </Button>
             </div>
           ) : (
             <div className="grid gap-3">
