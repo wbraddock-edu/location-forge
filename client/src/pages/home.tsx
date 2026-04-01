@@ -211,6 +211,7 @@ const IMPORTANCE_COLORS: Record<string, { bg: string; text: string }> = {
 interface DevelopedItem {
   profile: LocationProfile;
   visualImages: Record<string, string>;
+  visualImageHistory?: Record<string, string[]>;
 }
 
 type AuthScreen = "login" | "register" | "forgot" | "reset";
@@ -487,7 +488,7 @@ export default function HomePage() {
       }
       setDevelopedItems((prev) => ({
         ...prev,
-        [locationName]: { profile: DEMO_PROFILE, visualImages: {} },
+        [locationName]: { profile: DEMO_PROFILE, visualImages: {}, visualImageHistory: {} },
       }));
       setIsAnalyzing(false);
       setDevelopingLocation(null);
@@ -538,7 +539,7 @@ export default function HomePage() {
 
       setDevelopedItems((prev) => ({
         ...prev,
-        [locationName]: { profile: data.profile, visualImages: {} },
+        [locationName]: { profile: data.profile, visualImages: {}, visualImageHistory: {} },
       }));
       setStep("dashboard");
       return true;
@@ -690,6 +691,38 @@ export default function HomePage() {
     document.body.removeChild(link);
   };
 
+  // Upload an external image into a panel (from Midjourney, etc.)
+  const handleUploadPanelImage = (layerKey: string, file: File) => {
+    if (!file.type.startsWith("image/") || !expandedItem) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.split(",")[1];
+      if (!base64) return;
+      setDevelopedItems(prev => {
+        const item = prev[expandedItem];
+        if (!item) return prev;
+        // Preserve old image in history
+        const oldImage = item.visualImages[layerKey];
+        const existingHistory = item.visualImageHistory?.[layerKey] || [];
+        const updatedHistory = oldImage ? [oldImage, ...existingHistory].slice(0, 10) : existingHistory;
+        return {
+          ...prev,
+          [expandedItem]: {
+            ...item,
+            visualImages: { ...item.visualImages, [layerKey]: base64 },
+            visualImageHistory: {
+              ...(item.visualImageHistory || {}),
+              [layerKey]: updatedHistory,
+            },
+          },
+        };
+      });
+      toast({ title: "Image uploaded", description: `${file.name} set as ${layerKey} panel.` });
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Download all images as ZIP
   const handleDownloadAllImages = async () => {
     const entries = Object.entries(currentVisualImages);
@@ -775,13 +808,23 @@ export default function HomePage() {
       const imgData = await imgRes.json();
       if (imgData.error) throw new Error(imgData.error);
       if (imgData.image) {
-        setDevelopedItems((prev) => ({
-          ...prev,
-          [expandedItem]: {
-            ...prev[expandedItem],
-            visualImages: { ...prev[expandedItem].visualImages, [layerKey]: imgData.image },
-          },
-        }));
+        setDevelopedItems((prev) => {
+          // Preserve old image in history before replacing
+          const oldImage = prev[expandedItem].visualImages[layerKey];
+          const existingHistory = prev[expandedItem].visualImageHistory?.[layerKey] || [];
+          const updatedHistory = oldImage ? [oldImage, ...existingHistory].slice(0, 10) : existingHistory; // Keep max 10 versions
+          return {
+            ...prev,
+            [expandedItem]: {
+              ...prev[expandedItem],
+              visualImages: { ...prev[expandedItem].visualImages, [layerKey]: imgData.image },
+              visualImageHistory: {
+                ...(prev[expandedItem].visualImageHistory || {}),
+                [layerKey]: updatedHistory,
+              },
+            },
+          };
+        });
         toast({ title: `${layerKey === "establishing" ? "Anchor image" : "Image"} generated` });
         return imgData.image as string;
       }
@@ -2716,6 +2759,7 @@ export default function HomePage() {
                       const fullPrompt = currentProfile ? buildLayerPrompt(layer, currentProfile) : "";
                       // For display in copy-prompt dialog, use the full prompt
                       const displayPrompt = fullPrompt;
+                      const historyForPanel = (expandedItem && developedItems[expandedItem]?.visualImageHistory?.[layer.key]) || [];
                       return (
                         <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
                           {img ? (
@@ -2729,6 +2773,71 @@ export default function HomePage() {
                                 <p className="text-xs font-medium text-white/90">{layer.title}</p>
                                 <p className="text-[10px] text-white/60 uppercase tracking-wider">{layer.subtitle}</p>
                               </div>
+                              {/* Image History */}
+                              {historyForPanel.length > 0 && (
+                                <div className="absolute top-1 left-1 flex items-center gap-0.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDevelopedItems(prev => {
+                                        const item = prev[expandedItem!];
+                                        if (!item) return prev;
+                                        const history = item.visualImageHistory?.[layer.key] || [];
+                                        if (history.length === 0) return prev;
+                                        const currentImg = item.visualImages[layer.key];
+                                        const [previousImg, ...restHistory] = history;
+                                        return {
+                                          ...prev,
+                                          [expandedItem!]: {
+                                            ...item,
+                                            visualImages: { ...item.visualImages, [layer.key]: previousImg },
+                                            visualImageHistory: {
+                                              ...(item.visualImageHistory || {}),
+                                              [layer.key]: [...restHistory, currentImg],
+                                            },
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    className="w-6 h-6 rounded bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+                                    title="Previous version"
+                                  >
+                                    <ArrowLeft className="w-3 h-3" />
+                                  </button>
+                                  <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-black/60 text-white/80">
+                                    {historyForPanel.length + 1} ver{historyForPanel.length > 0 ? "s" : ""}
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDevelopedItems(prev => {
+                                        const item = prev[expandedItem!];
+                                        if (!item) return prev;
+                                        const history = item.visualImageHistory?.[layer.key] || [];
+                                        if (history.length === 0) return prev;
+                                        const currentImg = item.visualImages[layer.key];
+                                        const nextImg = history[history.length - 1];
+                                        const newHistory = [currentImg, ...history.slice(0, -1)];
+                                        return {
+                                          ...prev,
+                                          [expandedItem!]: {
+                                            ...item,
+                                            visualImages: { ...item.visualImages, [layer.key]: nextImg },
+                                            visualImageHistory: {
+                                              ...(item.visualImageHistory || {}),
+                                              [layer.key]: newHistory,
+                                            },
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    className="w-6 h-6 rounded bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+                                    title="Next version"
+                                  >
+                                    <ChevronRight className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ) : isCustom && !isGenerating ? (
                             <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] p-3 flex flex-col">
@@ -2784,6 +2893,24 @@ export default function HomePage() {
                                     <Copy className="w-3.5 h-3.5" />
                                   )}
                                 </Button>
+                                {/* Upload external image */}
+                                <button
+                                  className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors relative"
+                                  title="Upload image (Midjourney, Leonardo, etc.)"
+                                >
+                                  <Upload className="w-3.5 h-3.5" />
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) handleUploadPanelImage(layer.key, file);
+                                      e.target.value = "";
+                                    }}
+                                    data-testid={`upload-panel-${layer.key}`}
+                                  />
+                                </button>
                                 {/* Download image */}
                                 {img && (
                                   <Button
