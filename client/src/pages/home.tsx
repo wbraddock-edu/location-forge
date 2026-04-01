@@ -1410,7 +1410,7 @@ export default function HomePage() {
                 },
                 {
                   q: "What visual studies can I generate?",
-                  a: "Location Forge offers 36 visual panels organized into 6 tabs: Camera Shots (establishing, wide, medium, close-up, bird's eye, worm's eye, dutch angle), Lighting & Time (golden hour, blue hour, night, backlit), Weather & Atmosphere (rain, fog, storm, snow), Production Design (architectural detail, interior, entry, key props), Mood & Narrative (empty, populated, aftermath, danger zone), and Director's Vision (custom shots, emergency, power failure, decades later)."
+                  a: "Location Forge offers 36 visual panels organized into 6 tabs: Camera Shots (establishing, wide, medium, close-up, bird's eye, worm's eye, dutch angle), Lighting & Time (golden hour, blue hour, night, backlit), Weather & Atmosphere (rain, fog, storm, snow), Production Design (architectural detail, interior, entry, key props), Mood & Narrative (empty, populated, aftermath, danger zone), and Director's Vision (custom shots, emergency, power failure, decades later). Every image panel also includes a copyable Midjourney-ready prompt, so you can generate additional reference images in external tools like Midjourney, Leonardo, or Stable Diffusion."
                 },
                 {
                   q: "How does the anchor system work?",
@@ -1426,7 +1426,7 @@ export default function HomePage() {
                 },
                 {
                   q: "What AI providers are supported?",
-                  a: "Google AI (Gemini), OpenAI (GPT-4 + DALL-E 3), and Anthropic (Claude) for text analysis. Image generation uses Google AI or OpenAI. During your 7-day trial, the platform API key covers all generation."
+                  a: "For text analysis and location profiling, Location Forge supports OpenAI (ChatGPT/GPT-4) and Google AI (Gemini). For image generation, we currently support OpenAI (DALL-E 3) and Google AI (Gemini image generation). During your 7-day trial, the platform API key covers all generation at no cost."
                 },
                 {
                   q: "Can I export my work?",
