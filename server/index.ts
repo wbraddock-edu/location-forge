@@ -43,9 +43,12 @@ app.use((req, res, next) => {
   const path = req.path;
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
+  // Skip response body capture for endpoints that return large binary data (base64 images)
+  const skipBodyCapture = path.includes("generate-image") || path.includes("export");
+
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
+    if (!skipBodyCapture) capturedJsonResponse = bodyJson;
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
@@ -54,8 +57,12 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        const logStr = JSON.stringify(capturedJsonResponse);
-        logLine += ` :: ${logStr.length > 500 ? logStr.substring(0, 500) + '...[truncated]' : logStr}`;
+        try {
+          const logStr = JSON.stringify(capturedJsonResponse);
+          logLine += ` :: ${logStr.length > 500 ? logStr.substring(0, 500) + '...[truncated]' : logStr}`;
+        } catch {
+          logLine += ` :: [serialization skipped]`;
+        }
       }
 
       log(logLine);
