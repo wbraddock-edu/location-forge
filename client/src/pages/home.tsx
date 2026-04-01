@@ -786,7 +786,18 @@ export default function HomePage() {
         return imgData.image as string;
       }
     } catch (err: any) {
-      toast({ title: "Image generation failed", description: err.message, variant: "destructive" });
+      const msg = err.message || "Unknown error";
+      let friendlyMsg = msg;
+      if (msg.includes("429") || msg.includes("rate limit") || msg.includes("Rate limit")) {
+        friendlyMsg = "Rate limit reached — waiting a moment before retrying. Try generating one image at a time.";
+      } else if (msg.includes("503") || msg.includes("busy") || msg.includes("overload")) {
+        friendlyMsg = "AI service is temporarily busy. Please wait a few seconds and try again.";
+      } else if (msg.includes("422") || msg.includes("declined") || msg.includes("content")) {
+        friendlyMsg = "Image was declined by the AI — try a different art style or simplify the description.";
+      } else if (msg.includes("502")) {
+        friendlyMsg = "Server is restarting. Please wait 30 seconds and try again.";
+      }
+      toast({ title: "Image generation failed", description: friendlyMsg, variant: "destructive" });
     } finally {
       setGeneratingLayer(null);
     }
@@ -833,7 +844,7 @@ export default function HomePage() {
       if (establishingLayer) {
         const prompt = buildLayerPrompt(establishingLayer, currentProfile);
         anchorImage = await handleGenerateVisual("establishing", prompt) || undefined;
-        await delay(8000);
+        await delay(12000);
       }
     }
     
@@ -846,7 +857,7 @@ export default function HomePage() {
       if (!prompt) continue;
       await handleGenerateVisual(layer.key, prompt, anchorImage);
       if (i < tabLayers.length - 1) {
-        await delay(8000);
+        await delay(12000);
       }
     }
   };

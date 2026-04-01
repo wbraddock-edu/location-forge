@@ -120,6 +120,36 @@ async function callTextAI(
   throw new Error(`Unknown provider: ${provider}`);
 }
 
+// Retry helper with exponential backoff for rate limits
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, options);
+    if (res.ok) return res;
+    
+    const status = res.status;
+    // Retry on rate limit (429), server overload (503), or temporary error (500)
+    if ((status === 429 || status === 503 || status === 500) && attempt < maxRetries) {
+      const backoffMs = Math.min(5000 * Math.pow(2, attempt), 30000); // 5s, 10s, 20s
+      console.log(`Image API ${status} — retrying in ${backoffMs/1000}s (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise(r => setTimeout(r, backoffMs));
+      continue;
+    }
+    
+    // Non-retryable error or max retries exceeded
+    const errText = await res.text();
+    if (status === 429) {
+      throw new Error(`Rate limit reached. Please wait a moment and try again.`);
+    } else if (status === 503) {
+      throw new Error(`AI service is temporarily busy. Please try again in a few seconds.`);
+    } else if (status === 422) {
+      // Content filtered or invalid prompt
+      throw new Error(`Image generation was declined — try a different art style or simplify the description.`);
+    }
+    throw new Error(`Image API error (${status}): ${errText.substring(0, 200)}`);
+  }
+  throw new Error("Image generation failed after retries. Please try again.");
+}
+
 async function callImageAI(
   provider: string,
   apiKey: string,
@@ -127,7 +157,7 @@ async function callImageAI(
   referenceImages?: string[]
 ): Promise<string> {
   if (provider === "openai") {
-    const res = await fetch("https://api.openai.com/v1/images/generations", {
+    const res = await fetchWithRetry("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -141,10 +171,6 @@ async function callImageAI(
         response_format: "b64_json",
       }),
     });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`OpenAI Image API error: ${res.status} - ${err}`);
-    }
     const data = await res.json();
     return data.data[0].b64_json;
   } else if (provider === "google") {
@@ -169,7 +195,7 @@ async function callImageAI(
       parts.push({ text: `CRITICAL: Output exactly ONE single image. Do NOT create a collage, grid, triptych, side-by-side comparison, or multi-panel layout. Generate ONE continuous scene filling the entire frame. ${prompt}` });
     }
 
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${apiKey}`,
       {
         method: "POST",
@@ -182,10 +208,6 @@ async function callImageAI(
         }),
       }
     );
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Google Image API error: ${res.status} - ${err}`);
-    }
     const data = await res.json();
     const responseParts = data.candidates?.[0]?.content?.parts || [];
     const imagePart = responseParts.find((p: any) => p.inlineData);
