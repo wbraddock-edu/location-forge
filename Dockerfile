@@ -12,4 +12,4 @@ RUN cp client/public/lrap-logo.jpg dist/public/ 2>/dev/null || true && \
 
 ENV NODE_ENV=production
 EXPOSE 8080
-CMD ["node", "--max-old-space-size=512", "dist/index.cjs"]
+CMD node --max-old-space-size=512 dist/index.cjs
