@@ -1587,7 +1587,8 @@ export default function HomePage() {
             </div>
             {step === "results" && (
               <Button variant="ghost" size="sm" onClick={handleBackToDashboard} data-testid="button-back-dashboard">
-                Dashboard
+                <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+                Locations
               </Button>
             )}
             {step === "dashboard" && (
