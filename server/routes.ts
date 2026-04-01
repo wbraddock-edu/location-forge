@@ -885,6 +885,18 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Admin: list registered users
+  app.get("/api/admin/users", (req: Request, res: Response) => {
+    try {
+      const user = sqlite.prepare("SELECT * FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user || !isAdmin(user)) return res.status(403).json({ error: "Admin access required" });
+      const users = sqlite.prepare("SELECT id, email, display_name, role, subscription_status, trial_started_at, created_at FROM users ORDER BY created_at DESC").all();
+      return res.json({ users });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // Step 1: Scan text for locations
   app.post("/api/scan", async (req: Request, res: Response) => {
     if (!requireActiveSubscription(req, res)) return;
