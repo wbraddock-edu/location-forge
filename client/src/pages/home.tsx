@@ -974,6 +974,9 @@ export default function HomePage() {
   };
 
   const handleLogout = async () => {
+    if (currentProjectId) {
+      try { await saveProjectState(); } catch { /* silent */ }
+    }
     try { await apiRequest("POST", "/api/auth/logout"); } catch {}
     setSessionToken(null);
     setAuthUser(null);
@@ -1419,7 +1422,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-400">{authUser?.displayName}</span>
-              <Button variant="ghost" size="sm" onClick={() => setAppScreen("account")} className="text-gray-400 hover:text-white">
+              <Button variant="ghost" size="sm" onClick={async () => { if (currentProjectId) { try { await saveProjectState(); } catch { /* silent */ } } setAppScreen("account"); }} className="text-gray-400 hover:text-white">
                 <User className="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="sm" onClick={handleLogout} className="text-gray-400 hover:text-white">
