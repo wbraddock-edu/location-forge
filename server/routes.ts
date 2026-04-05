@@ -711,6 +711,138 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // ── Cross-app shared endpoints — NOT protected by session auth ──
+
+  app.get("/api/shared/projects", (req: Request, res: Response) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    const { email, secret } = req.query as { email?: string; secret?: string };
+
+    const expectedSecret = process.env.FORGE_CROSS_APP_SECRET;
+    if (!expectedSecret || !secret || secret !== expectedSecret) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: "email is required" });
+    }
+
+    try {
+      const user = sqlite.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+      if (!user) {
+        return res.json({ projects: [] });
+      }
+      const rows = sqlite.prepare(
+        "SELECT id, name FROM projects WHERE user_id = ? ORDER BY id"
+      ).all(user.id) as Array<{ id: number; name: string }>;
+      return res.json({ projects: rows });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/shared/locations", (req: Request, res: Response) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    const { email, secret, project: projectName } = req.query as { email?: string; secret?: string; project?: string };
+
+    const expectedSecret = process.env.FORGE_CROSS_APP_SECRET;
+    if (!expectedSecret || !secret || secret !== expectedSecret) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    if (!email && !projectName) {
+      return res.status(400).json({ error: "email or project name is required" });
+    }
+
+    try {
+      let userProjects: Array<{ id: number; name: string; state_json: string }>;
+
+      if (projectName) {
+        userProjects = sqlite.prepare(
+          "SELECT id, name, state_json FROM projects WHERE LOWER(name) = LOWER(?)"
+        ).all(projectName) as Array<{ id: number; name: string; state_json: string }>;
+
+        if (email) {
+          const user = sqlite.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+          if (user) {
+            const emailProjects = sqlite.prepare(
+              "SELECT id, name, state_json FROM projects WHERE user_id = ?"
+            ).all(user.id) as Array<{ id: number; name: string; state_json: string }>;
+            const existingIds = new Set(userProjects.map((p) => p.id));
+            for (const p of emailProjects) {
+              if (!existingIds.has(p.id)) userProjects.push(p);
+            }
+          }
+        }
+      } else {
+        const user = sqlite.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+        if (!user) {
+          return res.json({ locations: [] });
+        }
+        userProjects = sqlite.prepare(
+          "SELECT id, name, state_json FROM projects WHERE user_id = ?"
+        ).all(user.id) as Array<{ id: number; name: string; state_json: string }>;
+      }
+
+      const locations: Array<{
+        name: string;
+        projectName: string;
+        profile: Record<string, any>;
+        images: Record<string, string>;
+      }> = [];
+
+      for (const project of userProjects) {
+        let stateJson: any = {};
+        try {
+          stateJson = typeof project.state_json === "string"
+            ? JSON.parse(project.state_json)
+            : (project.state_json ?? {});
+        } catch {
+          continue;
+        }
+
+        const developedItems: Record<string, any> = stateJson.developedItems ?? {};
+
+        for (const [locName, devItem] of Object.entries(developedItems)) {
+          if (!devItem || typeof devItem !== "object") continue;
+          const rawProfile = (devItem as any).profile;
+          if (!rawProfile || typeof rawProfile !== "object") continue;
+
+          // Extract up to 3 images from visualImages
+          const visualImages: Record<string, any> = (devItem as any).visualImages ?? {};
+          const images: Record<string, string> = {};
+          let imageCount = 0;
+          for (const [panelKey, panelVal] of Object.entries(visualImages)) {
+            if (imageCount >= 3) break;
+            if (!panelVal) continue;
+            let base64Str: string | undefined;
+            if (typeof panelVal === "string") {
+              base64Str = panelVal.startsWith("data:") ? panelVal : `data:image/png;base64,${panelVal}`;
+            } else if (typeof panelVal === "object" && (panelVal as any).url) {
+              base64Str = (panelVal as any).url;
+            }
+            if (base64Str) {
+              images[panelKey] = base64Str;
+              imageCount++;
+            }
+          }
+
+          locations.push({
+            name: locName,
+            projectName: project.name ?? "",
+            profile: rawProfile,
+            images,
+          });
+        }
+      }
+
+      return res.json({ locations });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Auth Middleware — protects all /api/* except /api/auth/* and /api/stripe/webhook ──
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth/") || req.path.startsWith("/auth") || req.path === "/stripe/webhook") {

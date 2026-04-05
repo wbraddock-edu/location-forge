@@ -60,6 +60,10 @@ import {
   MessageCircle,
   Send,
   TicketCheck,
+  Users,
+  Box,
+  Mic,
+  Video,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -1636,16 +1640,16 @@ export default function HomePage() {
               <p className="text-xs mb-4" style={{ color: "hsl(220,5%,55%)" }}>
                 Location Forge is part of a complete production toolkit by Little Red Apple Productions.
               </p>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <a href="https://character.littleredappleproductions.com" target="_blank" rel="noopener noreferrer"
                   className="block rounded-lg p-4 transition-colors hover:border-primary/40"
                   style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
                   <div className="flex items-center gap-2 mb-2">
-                    <User className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <Users className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
                     <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Character Forge</span>
                   </div>
                   <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
-                    AI-powered character development. Scan manuscripts for characters, build detailed profiles, and generate visual portrait studies across 11 art styles.
+                    AI-powered character development with multi-panel portrait studies and 11 art styles.
                   </p>
                 </a>
                 <a href="https://manuscript.littleredappleproductions.com" target="_blank" rel="noopener noreferrer"
@@ -1656,7 +1660,73 @@ export default function HomePage() {
                     <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Manuscript Forge</span>
                   </div>
                   <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
-                    Production readiness analysis for screenplays and manuscripts. AI evaluates story structure, character arcs, pacing, dialogue, and generates a comprehensive production dashboard.
+                    Production readiness analysis for screenplays — story structure, character arcs, pacing, and dialogue.
+                  </p>
+                </a>
+                <a href="https://props.littleredappleproductions.com" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Box className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Props Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    AI-powered prop identification and visual development from manuscript analysis.
+                  </p>
+                </a>
+                <a href="https://scene.littleredappleproductions.com" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clapperboard className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Scene Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    Scene breakdown and shot lists with 10-section profiles — lighting, sound, VFX, and emotional mapping.
+                  </p>
+                </a>
+                <a href="https://github.com/wbraddock-edu/story-forge" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <BookOpen className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Story Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    AI-assisted story development and screenplay writing with structured narrative tools.
+                  </p>
+                </a>
+                <a href="https://github.com/wbraddock-edu/sound-forge" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Mic className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Sound Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    AI-powered sound design — dialogue, ambience, foley, music cues, and scene sound profiles.
+                  </p>
+                </a>
+                <a href="https://github.com/wbraddock-edu/production-forge" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Video className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Production Forge</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    Unified production pipeline — clip generation, voice performance, and motion animation.
+                  </p>
+                </a>
+                <a href="https://github.com/wbraddock-edu/prompt-cinematographer" target="_blank" rel="noopener noreferrer"
+                  className="block rounded-lg p-4 transition-colors hover:border-primary/40"
+                  style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Camera className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                    <span className="text-xs font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Prompt Cinematographer</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed" style={{ color: "hsl(220,5%,55%)" }}>
+                    Shot translation engine — converts cinematography language into AI video platform prompts.
                   </p>
                 </a>
               </div>
