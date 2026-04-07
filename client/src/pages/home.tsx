@@ -1407,7 +1407,7 @@ export default function HomePage() {
             Your locations and visual studies are stored securely per account.
           </p>
           <p className="text-xs text-center mt-4" style={{ color: "hsl(220,5%,30%)" }}>
-            Created with AI by <a href="https://littleredappleproductions.com" target="_blank" rel="noopener" style={{ color: "hsla(163,100%,42%,0.6)" }}>Little Red Apple Productions</a> &copy; 2026
+            Created with the Assistance of AI &copy; 2026 <a href="https://littleredappleproductions.com" target="_blank" rel="noopener noreferrer" style={{ color: "hsla(163,100%,42%,0.6)" }} className="hover:underline">Little Red Apple Productions</a>
           </p>
         </div>
       </div>
@@ -2009,7 +2009,7 @@ export default function HomePage() {
 
             <div className="mt-8 text-center">
               <p className="text-[10px]" style={{ color: "hsl(220,5%,30%)" }}>
-                Created with AI by <a href="https://littleredappleproductions.com" target="_blank" rel="noopener" style={{ color: "hsla(163,100%,42%,0.6)" }}>Little Red Apple Productions</a> &copy; 2026
+                Created with the Assistance of AI &copy; 2026 <a href="https://littleredappleproductions.com" target="_blank" rel="noopener noreferrer" style={{ color: "hsla(163,100%,42%,0.6)" }} className="hover:underline">Little Red Apple Productions</a>
               </p>
             </div>
           </div>
