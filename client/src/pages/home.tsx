@@ -64,6 +64,7 @@ import {
   Box,
   Mic,
   Video,
+  ChevronDown,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -268,6 +269,25 @@ export default function HomePage() {
   const [newProjectName, setNewProjectName] = useState("");
   const [renamingProjectId, setRenamingProjectId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // ── Cross-App Import State ──
+  const [sfImportOpen, setSfImportOpen] = useState(false);
+  const [sfProjects, setSfProjects] = useState<Array<{ id: number; name: string }>>([]);
+  const [sfProjectsLoading, setSfProjectsLoading] = useState(false);
+  const [sfSelectedProject, setSfSelectedProject] = useState<string | null>(null);
+  const [sfChapters, setSfChapters] = useState<Array<{ title: string; text?: string; content?: string; wordCount?: number }>>([]);
+  const [sfChaptersLoading, setSfChaptersLoading] = useState(false);
+  const [sfSelectedChapters, setSfSelectedChapters] = useState<Set<number>>(new Set());
+  const [sfImporting, setSfImporting] = useState(false);
+
+  const [mfImportOpen, setMfImportOpen] = useState(false);
+  const [mfProjects, setMfProjects] = useState<Array<{ id: number; name: string }>>([]);
+  const [mfProjectsLoading, setMfProjectsLoading] = useState(false);
+  const [mfSelectedProject, setMfSelectedProject] = useState<string | null>(null);
+  const [mfChapters, setMfChapters] = useState<Array<{ title: string; text?: string; content?: string; wordCount?: number }>>([]);
+  const [mfChaptersLoading, setMfChaptersLoading] = useState(false);
+  const [mfSelectedChapters, setMfSelectedChapters] = useState<Set<number>>(new Set());
+  const [mfImporting, setMfImporting] = useState(false);
 
   // ── Subscription State ──
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
@@ -1547,6 +1567,308 @@ export default function HomePage() {
               ))}
             </div>
           )}
+
+          {/* ── Import from Story Forge ── */}
+          <div className="mt-8">
+            <button
+              onClick={async () => {
+                const opening = !sfImportOpen;
+                setSfImportOpen(opening);
+                if (opening && sfProjects.length === 0) {
+                  setSfProjectsLoading(true);
+                  try {
+                    const res = await apiRequest("GET", "/api/story-forge/projects");
+                    const data = await res.json();
+                    setSfProjects(data.projects || []);
+                  } catch { /* silent */ }
+                  setSfProjectsLoading(false);
+                }
+              }}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-left"
+              style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}
+            >
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Import from Story Forge</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 transition-transform ${sfImportOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
+            </button>
+            {sfImportOpen && (
+              <div className="mt-2 rounded-lg p-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                {sfProjectsLoading ? (
+                  <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto" style={{ color: "hsl(163,100%,42%)" }} /></div>
+                ) : sfProjects.length === 0 ? (
+                  <p className="text-xs text-center py-4" style={{ color: "hsl(220,5%,52%)" }}>No Story Forge projects found for your account.</p>
+                ) : !sfSelectedProject ? (
+                  <div>
+                    <p className="text-xs font-mono mb-3" style={{ color: "hsl(220,5%,52%)" }}>Select a Story Forge project:</p>
+                    <div className="grid gap-2">
+                      {sfProjects.map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={async () => {
+                            setSfSelectedProject(p.name);
+                            setSfChaptersLoading(true);
+                            setSfSelectedChapters(new Set());
+                            try {
+                              const res = await apiRequest("GET", `/api/story-forge/chapters?project=${encodeURIComponent(p.name)}`);
+                              const data = await res.json();
+                              setSfChapters(data.chapters || []);
+                            } catch { /* silent */ }
+                            setSfChaptersLoading(false);
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:border-[hsl(163,100%,42%)]/40 transition-colors"
+                          style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)" }}
+                        >
+                          <BookOpen className="w-4 h-4 shrink-0" style={{ color: "hsl(163,100%,42%)" }} />
+                          <span className="text-sm font-medium truncate" style={{ color: "hsl(180,5%,88%)" }}>{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => { setSfSelectedProject(null); setSfChapters([]); setSfSelectedChapters(new Set()); }} className="text-xs underline" style={{ color: "hsl(163,100%,42%)" }}>&larr; Back</button>
+                        <span className="text-xs font-mono" style={{ color: "hsl(220,5%,52%)" }}>{sfSelectedProject}</span>
+                      </div>
+                      <span className="text-[10px] font-mono" style={{ color: "hsl(220,5%,40%)" }}>{sfSelectedChapters.size} selected</span>
+                    </div>
+                    {sfChaptersLoading ? (
+                      <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto" style={{ color: "hsl(163,100%,42%)" }} /></div>
+                    ) : sfChapters.length === 0 ? (
+                      <p className="text-xs text-center py-4" style={{ color: "hsl(220,5%,52%)" }}>No chapters found in this project.</p>
+                    ) : (
+                      <>
+                        <div className="mb-2 flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (sfSelectedChapters.size === sfChapters.length) {
+                                setSfSelectedChapters(new Set());
+                              } else {
+                                setSfSelectedChapters(new Set(sfChapters.map((_, i) => i)));
+                              }
+                            }}
+                            className="text-[10px] font-mono underline"
+                            style={{ color: "hsl(163,100%,42%)" }}
+                          >
+                            {sfSelectedChapters.size === sfChapters.length ? "Deselect all" : "Select all"}
+                          </button>
+                        </div>
+                        <div className="space-y-1 max-h-60 overflow-y-auto">
+                          {sfChapters.map((ch, i) => {
+                            const wc = ch.wordCount ?? (ch.text || ch.content || "").split(/\s+/).filter(Boolean).length;
+                            return (
+                              <label key={i} className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-white/5">
+                                <input
+                                  type="checkbox"
+                                  checked={sfSelectedChapters.has(i)}
+                                  onChange={() => {
+                                    const next = new Set(sfSelectedChapters);
+                                    next.has(i) ? next.delete(i) : next.add(i);
+                                    setSfSelectedChapters(next);
+                                  }}
+                                  className="accent-[hsl(163,100%,42%)]"
+                                />
+                                <span className="text-xs truncate flex-1" style={{ color: "hsl(180,5%,88%)" }}>{ch.title || `Chapter ${i + 1}`}</span>
+                                <span className="text-[10px] font-mono shrink-0" style={{ color: "hsl(220,5%,40%)" }}>{wc.toLocaleString()} words</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <Button
+                          size="sm"
+                          disabled={sfSelectedChapters.size === 0 || sfImporting}
+                          onClick={async () => {
+                            setSfImporting(true);
+                            try {
+                              const selected = [...sfSelectedChapters].sort().map((i) => sfChapters[i]);
+                              const res = await apiRequest("POST", "/api/story-forge/import-project", {
+                                projectName: sfSelectedProject,
+                                chapters: selected,
+                              });
+                              const data = await res.json();
+                              toast({ title: `Imported "${sfSelectedProject}" with ${selected.length} chapter${selected.length !== 1 ? "s" : ""}` });
+                              // Reset import state
+                              setSfSelectedProject(null);
+                              setSfChapters([]);
+                              setSfSelectedChapters(new Set());
+                              setSfImportOpen(false);
+                              // Refresh project list
+                              try {
+                                const pr = await apiRequest("GET", "/api/projects");
+                                const pd = await pr.json();
+                                setProjects(pd.projects || []);
+                              } catch {}
+                            } catch (err: any) {
+                              toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                            }
+                            setSfImporting(false);
+                          }}
+                          className="mt-3 w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold"
+                        >
+                          {sfImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                          Create Project
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Import from Manuscript Forge ── */}
+          <div className="mt-3">
+            <button
+              onClick={async () => {
+                const opening = !mfImportOpen;
+                setMfImportOpen(opening);
+                if (opening && mfProjects.length === 0) {
+                  setMfProjectsLoading(true);
+                  try {
+                    const res = await apiRequest("GET", "/api/manuscript-forge/projects");
+                    const data = await res.json();
+                    setMfProjects(data.projects || []);
+                  } catch { /* silent */ }
+                  setMfProjectsLoading(false);
+                }
+              }}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-left"
+              style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}
+            >
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Import from Manuscript Forge</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 transition-transform ${mfImportOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
+            </button>
+            {mfImportOpen && (
+              <div className="mt-2 rounded-lg p-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                {mfProjectsLoading ? (
+                  <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto" style={{ color: "hsl(163,100%,42%)" }} /></div>
+                ) : mfProjects.length === 0 ? (
+                  <p className="text-xs text-center py-4" style={{ color: "hsl(220,5%,52%)" }}>No Manuscript Forge projects found for your account.</p>
+                ) : !mfSelectedProject ? (
+                  <div>
+                    <p className="text-xs font-mono mb-3" style={{ color: "hsl(220,5%,52%)" }}>Select a Manuscript Forge project:</p>
+                    <div className="grid gap-2">
+                      {mfProjects.map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={async () => {
+                            setMfSelectedProject(p.name);
+                            setMfChaptersLoading(true);
+                            setMfSelectedChapters(new Set());
+                            try {
+                              const res = await apiRequest("GET", `/api/manuscript-forge/chapters?project=${encodeURIComponent(p.name)}`);
+                              const data = await res.json();
+                              setMfChapters(data.chapters || []);
+                            } catch { /* silent */ }
+                            setMfChaptersLoading(false);
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:border-[hsl(163,100%,42%)]/40 transition-colors"
+                          style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)" }}
+                        >
+                          <FileText className="w-4 h-4 shrink-0" style={{ color: "hsl(163,100%,42%)" }} />
+                          <span className="text-sm font-medium truncate" style={{ color: "hsl(180,5%,88%)" }}>{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => { setMfSelectedProject(null); setMfChapters([]); setMfSelectedChapters(new Set()); }} className="text-xs underline" style={{ color: "hsl(163,100%,42%)" }}>&larr; Back</button>
+                        <span className="text-xs font-mono" style={{ color: "hsl(220,5%,52%)" }}>{mfSelectedProject}</span>
+                      </div>
+                      <span className="text-[10px] font-mono" style={{ color: "hsl(220,5%,40%)" }}>{mfSelectedChapters.size} selected</span>
+                    </div>
+                    {mfChaptersLoading ? (
+                      <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto" style={{ color: "hsl(163,100%,42%)" }} /></div>
+                    ) : mfChapters.length === 0 ? (
+                      <p className="text-xs text-center py-4" style={{ color: "hsl(220,5%,52%)" }}>No chapters found in this project.</p>
+                    ) : (
+                      <>
+                        <div className="mb-2 flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (mfSelectedChapters.size === mfChapters.length) {
+                                setMfSelectedChapters(new Set());
+                              } else {
+                                setMfSelectedChapters(new Set(mfChapters.map((_, i) => i)));
+                              }
+                            }}
+                            className="text-[10px] font-mono underline"
+                            style={{ color: "hsl(163,100%,42%)" }}
+                          >
+                            {mfSelectedChapters.size === mfChapters.length ? "Deselect all" : "Select all"}
+                          </button>
+                        </div>
+                        <div className="space-y-1 max-h-60 overflow-y-auto">
+                          {mfChapters.map((ch, i) => {
+                            const wc = ch.wordCount ?? (ch.text || ch.content || "").split(/\s+/).filter(Boolean).length;
+                            return (
+                              <label key={i} className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-white/5">
+                                <input
+                                  type="checkbox"
+                                  checked={mfSelectedChapters.has(i)}
+                                  onChange={() => {
+                                    const next = new Set(mfSelectedChapters);
+                                    next.has(i) ? next.delete(i) : next.add(i);
+                                    setMfSelectedChapters(next);
+                                  }}
+                                  className="accent-[hsl(163,100%,42%)]"
+                                />
+                                <span className="text-xs truncate flex-1" style={{ color: "hsl(180,5%,88%)" }}>{ch.title || `Chapter ${i + 1}`}</span>
+                                <span className="text-[10px] font-mono shrink-0" style={{ color: "hsl(220,5%,40%)" }}>{wc.toLocaleString()} words</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <Button
+                          size="sm"
+                          disabled={mfSelectedChapters.size === 0 || mfImporting}
+                          onClick={async () => {
+                            setMfImporting(true);
+                            try {
+                              const selected = [...mfSelectedChapters].sort().map((i) => mfChapters[i]);
+                              const res = await apiRequest("POST", "/api/manuscript-forge/import-project", {
+                                projectName: mfSelectedProject,
+                                chapters: selected,
+                              });
+                              const data = await res.json();
+                              toast({ title: `Imported "${mfSelectedProject}" with ${selected.length} chapter${selected.length !== 1 ? "s" : ""}` });
+                              // Reset import state
+                              setMfSelectedProject(null);
+                              setMfChapters([]);
+                              setMfSelectedChapters(new Set());
+                              setMfImportOpen(false);
+                              // Refresh project list
+                              try {
+                                const pr = await apiRequest("GET", "/api/projects");
+                                const pd = await pr.json();
+                                setProjects(pd.projects || []);
+                              } catch {}
+                            } catch (err: any) {
+                              toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                            }
+                            setMfImporting(false);
+                          }}
+                          className="mt-3 w-full bg-[#00d4aa] hover:bg-[#00b894] text-black font-semibold"
+                        >
+                          {mfImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                          Create Project
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* FAQ & Cross-Promotion */}
           <div className="mt-12 mb-8">

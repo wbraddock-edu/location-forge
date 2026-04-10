@@ -789,8 +789,17 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         name: string;
         projectName: string;
         profile: Record<string, any>;
-        images: Record<string, string>;
+        images: Record<string, string> & { anchor?: string };
       }> = [];
+
+      // Preferred panel keys for anchor thumbnail (first available wins)
+      const anchorPanelOrder = [
+        "establishing", "visualEstablishing",
+        "goldenHour", "visualLighting",
+        "wideShot", "mediumShot",
+        "clearDay", "architectural", "visualArchitectural",
+        "interiorFocal", "visualInterior",
+      ];
 
       for (const project of userProjects) {
         let stateJson: any = {};
@@ -811,7 +820,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
           // Extract up to 3 images from visualImages
           const visualImages: Record<string, any> = (devItem as any).visualImages ?? {};
-          const images: Record<string, string> = {};
+          const images: Record<string, string> & { anchor?: string } = {};
           let imageCount = 0;
           for (const [panelKey, panelVal] of Object.entries(visualImages)) {
             if (imageCount >= 3) break;
@@ -826,6 +835,27 @@ export async function registerRoutes(httpServer: Server, app: Express) {
               images[panelKey] = base64Str;
               imageCount++;
             }
+          }
+
+          // Pick anchor thumbnail: first available from preferred panel order, else first image
+          let anchorRaw: string | undefined;
+          for (const key of anchorPanelOrder) {
+            const val = visualImages[key];
+            if (!val) continue;
+            if (typeof val === "string") { anchorRaw = val; break; }
+            if (typeof val === "object" && (val as any).url) { anchorRaw = (val as any).url; break; }
+          }
+          if (!anchorRaw) {
+            // Fallback: first available image value
+            for (const val of Object.values(visualImages)) {
+              if (!val) continue;
+              if (typeof val === "string") { anchorRaw = val as string; break; }
+              if (typeof val === "object" && (val as any).url) { anchorRaw = (val as any).url; break; }
+            }
+          }
+          if (anchorRaw) {
+            // Strip data:image/...;base64, prefix — return raw base64 only
+            images.anchor = anchorRaw.replace(/^data:image\/[^;]+;base64,/, "");
           }
 
           locations.push({
@@ -1034,6 +1064,118 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         `UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?`
       ).run(name.trim(), new Date().toISOString(), parseInt(req.params.id as string), req.userId!);
       return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Story Forge Import Proxy ──
+
+  const STORY_FORGE_URL = process.env.STORY_FORGE_URL || "https://story-forge-backend-production.up.railway.app";
+
+  app.get("/api/story-forge/projects", async (req: Request, res: Response) => {
+    try {
+      const secret = process.env.FORGE_CROSS_APP_SECRET;
+      if (!secret) return res.status(500).json({ error: "Cross-app secret not configured" });
+      const user = sqlite.prepare("SELECT email FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user) return res.status(401).json({ error: "User not found" });
+      const url = `${STORY_FORGE_URL}/api/shared/projects?secret=${encodeURIComponent(secret)}&email=${encodeURIComponent(user.email)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return res.status(resp.status).json({ error: "Story Forge request failed" });
+      const data = await resp.json();
+      return res.json(data);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/story-forge/chapters", async (req: Request, res: Response) => {
+    try {
+      const secret = process.env.FORGE_CROSS_APP_SECRET;
+      if (!secret) return res.status(500).json({ error: "Cross-app secret not configured" });
+      const user = sqlite.prepare("SELECT email FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user) return res.status(401).json({ error: "User not found" });
+      const project = req.query.project as string;
+      if (!project) return res.status(400).json({ error: "project is required" });
+      const url = `${STORY_FORGE_URL}/api/shared/chapters?secret=${encodeURIComponent(secret)}&email=${encodeURIComponent(user.email)}&project=${encodeURIComponent(project)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return res.status(resp.status).json({ error: "Story Forge request failed" });
+      const data = await resp.json();
+      return res.json(data);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/story-forge/import-project", async (req: Request, res: Response) => {
+    try {
+      const { projectName, chapters } = req.body;
+      if (!projectName || !Array.isArray(chapters) || chapters.length === 0) {
+        return res.status(400).json({ error: "projectName and chapters[] required" });
+      }
+      const sourceText = chapters.map((ch: any) => ch.text || ch.content || "").join("\n\n");
+      const now = new Date().toISOString();
+      const stateJson = JSON.stringify({ sourceText, sourceType: "story" });
+      const result = sqlite.prepare(
+        `INSERT INTO projects (user_id, name, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+      ).run(req.userId!, projectName.trim(), stateJson, now, now);
+      return res.json({ id: Number(result.lastInsertRowid), name: projectName.trim() });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Manuscript Forge Import Proxy ──
+
+  const MANUSCRIPT_FORGE_URL = process.env.MANUSCRIPT_FORGE_URL || "https://manuscript.littleredappleproductions.com";
+
+  app.get("/api/manuscript-forge/projects", async (req: Request, res: Response) => {
+    try {
+      const secret = process.env.FORGE_CROSS_APP_SECRET;
+      if (!secret) return res.status(500).json({ error: "Cross-app secret not configured" });
+      const user = sqlite.prepare("SELECT email FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user) return res.status(401).json({ error: "User not found" });
+      const url = `${MANUSCRIPT_FORGE_URL}/api/shared/projects?secret=${encodeURIComponent(secret)}&email=${encodeURIComponent(user.email)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return res.status(resp.status).json({ error: "Manuscript Forge request failed" });
+      const data = await resp.json();
+      return res.json(data);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/manuscript-forge/chapters", async (req: Request, res: Response) => {
+    try {
+      const secret = process.env.FORGE_CROSS_APP_SECRET;
+      if (!secret) return res.status(500).json({ error: "Cross-app secret not configured" });
+      const user = sqlite.prepare("SELECT email FROM users WHERE id = ?").get(req.userId!) as any;
+      if (!user) return res.status(401).json({ error: "User not found" });
+      const project = req.query.project as string;
+      if (!project) return res.status(400).json({ error: "project is required" });
+      const url = `${MANUSCRIPT_FORGE_URL}/api/shared/chapters?secret=${encodeURIComponent(secret)}&email=${encodeURIComponent(user.email)}&project=${encodeURIComponent(project)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return res.status(resp.status).json({ error: "Manuscript Forge request failed" });
+      const data = await resp.json();
+      return res.json(data);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/manuscript-forge/import-project", async (req: Request, res: Response) => {
+    try {
+      const { projectName, chapters } = req.body;
+      if (!projectName || !Array.isArray(chapters) || chapters.length === 0) {
+        return res.status(400).json({ error: "projectName and chapters[] required" });
+      }
+      const sourceText = chapters.map((ch: any) => ch.text || ch.content || "").join("\n\n");
+      const now = new Date().toISOString();
+      const stateJson = JSON.stringify({ sourceText, sourceType: "story" });
+      const result = sqlite.prepare(
+        `INSERT INTO projects (user_id, name, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+      ).run(req.userId!, projectName.trim(), stateJson, now, now);
+      return res.json({ id: Number(result.lastInsertRowid), name: projectName.trim() });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
