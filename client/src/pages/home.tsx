@@ -344,6 +344,11 @@ export default function HomePage() {
   const [supportTickets, setSupportTickets] = useState<any[]>([]);
   const [chatHistory, setChatHistory] = useState<Array<{role: "user" | "ai", text: string}>>([]);
 
+  // ── AI Enhance State ──
+  const [enhancingFields, setEnhancingFields] = useState<Set<string>>(new Set());
+  const [enhancedFields, setEnhancedFields] = useState<Set<string>>(new Set());
+  const [enhanceAllProgress, setEnhanceAllProgress] = useState<{ current: number; total: number } | null>(null);
+
   const currentProvider = PROVIDERS.find((p) => p.id === provider)!;
 
   // The current expanded item's profile and visual images
@@ -928,6 +933,102 @@ export default function HomePage() {
         await delay(12000);
       }
     }
+  };
+
+  // ── AI Enhance Helpers ──
+
+  const PLACEHOLDER_TEXT = "[Not enough information — consider developing this area]";
+
+  const isFieldEmpty = (value: string | undefined): boolean => {
+    if (!value) return true;
+    if (value === "—") return true;
+    if (value.includes("[Not enough information")) return true;
+    return false;
+  };
+
+  const buildLocationContext = (profile: LocationProfile): string => {
+    const contextParts: string[] = [];
+    const keys: (keyof LocationProfile)[] = [
+      "logline", "type", "scale", "timePeriod", "region", "terrain", "climate",
+      "layoutDescription", "defaultEmotionalTone", "originFounding",
+      "whoLivesWorksHere", "storyEventsHere",
+    ];
+    for (const k of keys) {
+      const val = profile[k];
+      if (val && !isFieldEmpty(val)) {
+        contextParts.push(`${k}: ${val}`);
+      }
+    }
+    return contextParts.join(". ") || "No additional context available.";
+  };
+
+  const handleEnhanceField = async (fieldKey: string, fieldLabel: string) => {
+    if (!currentProfile || !expandedItem) return;
+    const currentValue = (currentProfile as any)[fieldKey] || "";
+
+    setEnhancingFields((prev) => new Set(prev).add(fieldKey));
+    try {
+      const res = await apiRequest("POST", "/api/enhance", {
+        fieldKey,
+        fieldLabel,
+        currentValue,
+        locationName: expandedItem,
+        locationContext: buildLocationContext(currentProfile),
+        provider,
+        apiKey,
+      });
+      const data = await res.json();
+      if (data.enhanced) {
+        // Update profile in developedItems
+        setDevelopedItems((prev) => {
+          const item = prev[expandedItem!];
+          if (!item) return prev;
+          const updatedProfile = { ...item.profile, [fieldKey]: data.enhanced };
+          return { ...prev, [expandedItem!]: { ...item, profile: updatedProfile } };
+        });
+        setEnhancedFields((prev) => new Set(prev).add(fieldKey));
+      }
+    } catch (err: any) {
+      toast({ title: "Enhance failed", description: err.message, variant: "destructive" });
+    } finally {
+      setEnhancingFields((prev) => {
+        const next = new Set(prev);
+        next.delete(fieldKey);
+        return next;
+      });
+    }
+  };
+
+  const handleEnhanceAll = async () => {
+    if (!currentProfile || !expandedItem) return;
+
+    // Gather all empty fields across all sections (excluding visual fields)
+    const emptyFields: { key: string; label: string }[] = [];
+    for (const section of PROFILE_SECTIONS) {
+      for (const field of section.fields) {
+        const val = (currentProfile as any)[field.key] || "";
+        if (isFieldEmpty(val)) {
+          emptyFields.push({ key: field.key, label: field.label });
+        }
+      }
+    }
+    if (emptyFields.length === 0) {
+      toast({ title: "Nothing to enhance", description: "All profile fields already have content." });
+      return;
+    }
+
+    setEnhanceAllProgress({ current: 0, total: emptyFields.length });
+
+    for (let i = 0; i < emptyFields.length; i++) {
+      setEnhanceAllProgress({ current: i + 1, total: emptyFields.length });
+      await handleEnhanceField(emptyFields[i].key, emptyFields[i].label);
+      // Small delay between calls to avoid rate limits
+      if (i < emptyFields.length - 1) {
+        await delay(1500);
+      }
+    }
+    setEnhanceAllProgress(null);
+    toast({ title: "Enhancement complete", description: `Enhanced ${emptyFields.length} fields with AI-generated content.` });
   };
 
   // Reset
@@ -3366,18 +3467,59 @@ export default function HomePage() {
                   {PROFILE_SECTIONS.map((section) => (
                     <TabsContent key={section.num} value={String(section.num)} className="p-5 mt-0">
                       <div className="space-y-4">
-                        <h3 className="font-sans font-bold text-base text-primary">
-                          Section {section.num} · {section.title}
-                        </h3>
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-sans font-bold text-base text-primary">
+                            Section {section.num} · {section.title}
+                          </h3>
+                          {enhanceAllProgress ? (
+                            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Enhancing {enhanceAllProgress.current} of {enhanceAllProgress.total}...
+                            </span>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs h-7 px-2 gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                              onClick={handleEnhanceAll}
+                              disabled={enhancingFields.size > 0}
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              Enhance All Empty
+                            </Button>
+                          )}
+                        </div>
                         <div className="space-y-3">
                           {section.fields.map((field) => {
                             const value = (currentProfile as any)[field.key] || "—";
+                            const empty = isFieldEmpty(value);
+                            const isEnhancing = enhancingFields.has(field.key);
+                            const wasEnhanced = enhancedFields.has(field.key);
                             return (
                               <div key={field.key}>
-                                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-0.5">
-                                  {field.label}
+                                <div className="flex items-center justify-between mb-0.5">
+                                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                                    {field.label}
+                                  </p>
+                                  {(empty || wasEnhanced) && !isEnhancing && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-5 w-5 p-0 text-primary/60 hover:text-primary hover:bg-primary/10"
+                                      onClick={() => handleEnhanceField(field.key, field.label)}
+                                      disabled={enhancingFields.size > 0}
+                                      title={empty ? "Enhance with AI" : "Re-enhance with AI"}
+                                    >
+                                      <Wand2 className="w-3 h-3" />
+                                    </Button>
+                                  )}
+                                  {isEnhancing && (
+                                    <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                                  )}
+                                </div>
+                                <p className={`text-sm leading-relaxed whitespace-pre-wrap ${wasEnhanced ? "bg-green-500/10 rounded px-1.5 py-0.5" : ""}`}>
+                                  {value}
                                 </p>
-                                <p className="text-sm leading-relaxed whitespace-pre-wrap">{value}</p>
                               </div>
                             );
                           })}

@@ -1739,6 +1739,78 @@ Respond with ONLY the style prompt text, nothing else.`;
     }
   });
 
+  // ── AI Enhance — fill underdeveloped profile fields ──
+
+  // Field-length categories for the enhance prompt
+  const SHORT_FIELDS = new Set(["type", "scale", "timePeriod", "alternateNames", "climate", "elevation", "region", "terrain"]);
+  const MEDIUM_FIELDS = new Set([
+    "logline", "defaultEmotionalTone", "psychologicalEffect", "protagonistFeeling",
+    "appearsVsReality", "locationLie", "lightQuality", "temperatureAirQuality",
+    "defaultSounds", "smells", "tactileSurfaces", "accessControl", "newcomerTreatment",
+    "powerHierarchy", "territorialBoundaries", "characterMirror", "colorWeatherAssociations",
+    "recurringMotifs", "symbolicObjects", "thematicRepresentation",
+    "transformationStatement", "transformationCause", "stateAtOpening", "stateAtClimax",
+    "stateAtResolution", "keyProps", "cameraAngleSuggestions", "vfxNotes",
+  ]);
+  // Everything else is LONG
+
+  function getFieldLengthDirective(fieldKey: string): string {
+    if (SHORT_FIELDS.has(fieldKey)) return "Respond in 1-5 words only.";
+    if (MEDIUM_FIELDS.has(fieldKey)) return "Respond in 1-3 concise sentences.";
+    return "Respond in 2-5 detailed sentences.";
+  }
+
+  app.post("/api/enhance", async (req: Request, res: Response) => {
+    if (!requireActiveSubscription(req, res)) return;
+    try {
+      const { fieldKey, fieldLabel, currentValue, locationName, locationContext, provider, apiKey: userApiKey } = req.body;
+
+      if (!fieldKey || !fieldLabel || !locationName) {
+        return res.status(400).json({ error: "fieldKey, fieldLabel, and locationName are required" });
+      }
+
+      const resolved = resolveApiKey(userApiKey, req.userId!);
+      if (resolved.error) return res.status(403).json({ error: resolved.error, message: "Please add your API key in Account settings." });
+
+      const lengthDirective = getFieldLengthDirective(fieldKey);
+
+      const systemPrompt = `You are an expert fiction writing analyst and world-building consultant specializing in film/TV production bibles. Your job is to creatively develop underdeveloped location profile sections with plausible, story-consistent details.
+
+Generate content that is vivid, specific, and production-ready. Write as if filling in a professional location breakdown sheet for a film or TV production.
+
+${lengthDirective}
+
+Respond with ONLY the generated text — no quotes, no labels, no explanation. Just the content itself.`;
+
+      const userPrompt = `Based on what we know about this location from the source material, creatively develop the following section with plausible, story-consistent details.
+
+Location: ${locationName}
+Known context: ${locationContext || "No additional context available."}
+Section to develop: ${fieldLabel}
+${currentValue && !currentValue.includes("[Not enough information") ? `Current value (expand or improve): ${currentValue}` : ""}
+
+Generate a concise, production-ready description for this section. Keep it focused and practical — this is for a film/TV production bible.`;
+
+      const result = await callTextAI(
+        provider,
+        resolved.key,
+        systemPrompt,
+        userPrompt
+      );
+
+      // Clean up the result — strip quotes if the AI wrapped them
+      let enhanced = result.trim();
+      if ((enhanced.startsWith('"') && enhanced.endsWith('"')) || (enhanced.startsWith("'") && enhanced.endsWith("'"))) {
+        enhanced = enhanced.slice(1, -1);
+      }
+
+      return res.json({ enhanced });
+    } catch (err: any) {
+      console.error("Enhance error:", err);
+      return res.status(422).json({ error: err.message });
+    }
+  });
+
   // Get saved locations for this visitor
   app.get("/api/locations", (req: Request, res: Response) => {
     const visitorId = req.headers["x-visitor-id"] as string || "anonymous";
