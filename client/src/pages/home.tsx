@@ -3020,7 +3020,7 @@ export default function HomePage() {
               <CardContent>
                 <div className="flex flex-wrap gap-3">
                   {userReferenceImages.map((img, i) => (
-                    <div key={i} className="relative w-20 h-20 rounded-lg overflow-hidden border border-border group">
+                    <div key={i} className="relative w-28 aspect-video rounded-lg overflow-hidden border border-border group">
                       <img
                         src={`data:image/png;base64,${img}`}
                         alt={`Reference ${i + 1}`}
@@ -3039,7 +3039,7 @@ export default function HomePage() {
                     </div>
                   ))}
                   {userReferenceImages.length < 6 && (
-                    <label className="w-20 h-20 rounded-lg border-2 border-dashed border-border flex flex-col items-center justify-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors">
+                    <label className="w-28 aspect-video rounded-lg border-2 border-dashed border-border flex flex-col items-center justify-center cursor-pointer hover:border-primary/50 hover:bg-muted/50 transition-colors">
                       <Upload className="w-4 h-4 text-muted-foreground mb-1" />
                       <span className="text-[9px] text-muted-foreground">{userReferenceImages.length}/6</span>
                       <input
@@ -3221,7 +3221,7 @@ export default function HomePage() {
                       return (
                         <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
                           {img ? (
-                            <div className="relative w-full aspect-square">
+                            <div className="relative w-full aspect-video overflow-hidden">
                               <img
                                 src={`data:image/png;base64,${img}`}
                                 alt={layer.title}
@@ -3298,7 +3298,7 @@ export default function HomePage() {
                               )}
                             </div>
                           ) : isCustom && !isGenerating ? (
-                            <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] p-3 flex flex-col">
+                            <div className="w-full aspect-video bg-[hsl(225,18%,6%)] p-3 flex flex-col">
                               <Textarea
                                 placeholder="Describe the scene... e.g. 'aerial view during a thunderstorm at midnight, lightning illuminating the mountain, rain pouring down'"
                                 value={customPrompt}
@@ -3308,7 +3308,7 @@ export default function HomePage() {
                               />
                             </div>
                           ) : (
-                            <div className="w-full aspect-[4/3] bg-[hsl(225,18%,6%)] flex items-center justify-center">
+                            <div className="w-full aspect-video bg-[hsl(225,18%,6%)] flex items-center justify-center">
                               {isGenerating ? (
                                 <div className="text-center">
                                   <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-primary" />
