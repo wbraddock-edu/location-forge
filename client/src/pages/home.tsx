@@ -65,6 +65,10 @@ import {
   Mic,
   Video,
   ChevronDown,
+  Lock,
+  Unlock,
+  Maximize2,
+  X as XIcon,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -217,6 +221,7 @@ interface DevelopedItem {
   profile: LocationProfile;
   visualImages: Record<string, string>;
   visualImageHistory?: Record<string, string[]>;
+  imageLocks?: Record<string, boolean>;
 }
 
 type AuthScreen = "login" | "register" | "forgot" | "reset";
@@ -338,6 +343,7 @@ export default function HomePage() {
   const [generatingStyle, setGeneratingStyle] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
   const [showPromptDialog, setShowPromptDialog] = useState<{ layerKey: string; title: string; prompt: string } | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ layerKey: string; title: string; subtitle: string; category: string; image: string; description: string; locked: boolean } | null>(null);
   const [userReferenceImages, setUserReferenceImages] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState("");
   const [isScanning, setIsScanning] = useState(false);
@@ -722,6 +728,36 @@ export default function HomePage() {
     }
   };
 
+  // ── Image Lock helpers ──
+  // A locked image is protected from regeneration, upload-replacement, and batch
+  // "Generate Tab"/"Generate All" actions. View / download / copy-prompt remain available.
+  const isLayerLocked = (layerKey: string): boolean => {
+    if (!expandedItem) return false;
+    return !!developedItems[expandedItem]?.imageLocks?.[layerKey];
+  };
+
+  const toggleLayerLock = (layerKey: string) => {
+    if (!expandedItem) return;
+    setDevelopedItems((prev) => {
+      const item = prev[expandedItem];
+      if (!item) return prev;
+      const currentLocks = item.imageLocks || {};
+      const nextLocked = !currentLocks[layerKey];
+      const nextLocks = { ...currentLocks, [layerKey]: nextLocked };
+      if (!nextLocked) delete nextLocks[layerKey];
+      return {
+        ...prev,
+        [expandedItem]: { ...item, imageLocks: nextLocks },
+      };
+    });
+    toast({
+      title: isLayerLocked(layerKey) ? "Image unlocked" : "Image locked",
+      description: isLayerLocked(layerKey)
+        ? "This image can now be regenerated or replaced."
+        : "This image is protected from regeneration and batch actions.",
+    });
+  };
+
   // Show prompt for Midjourney
   // Note: prompt passed here already includes style lock from buildLayerPrompt
   const handleCopyPrompt = (layerKey: string, layerTitle: string, prompt: string) => {
@@ -743,6 +779,10 @@ export default function HomePage() {
   // Upload an external image into a panel (from Midjourney, etc.)
   const handleUploadPanelImage = (layerKey: string, file: File) => {
     if (!file.type.startsWith("image/") || !expandedItem) return;
+    if (isLayerLocked(layerKey)) {
+      toast({ title: "Image locked", description: "Unlock this image before uploading a replacement.", variant: "destructive" });
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
@@ -839,6 +879,10 @@ export default function HomePage() {
   const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: string) => {
     if (!prompt || !expandedItem) {
       if (!prompt) toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
+      return;
+    }
+    if (isLayerLocked(layerKey)) {
+      toast({ title: "Image locked", description: "Unlock this image before regenerating.", variant: "destructive" });
       return;
     }
     setGeneratingLayer(layerKey);
@@ -946,6 +990,7 @@ export default function HomePage() {
       const layer = tabLayers[i];
       if (layer.key === "establishing" && anchorImage) continue;
       if (currentVisualImages[layer.key]) continue;
+      if (isLayerLocked(layer.key)) continue; // locked images are protected from batch actions
       const prompt = buildLayerPrompt(layer, currentProfile);
       if (!prompt) continue;
       await handleGenerateVisual(layer.key, prompt, anchorImage);
@@ -1287,6 +1332,16 @@ export default function HomePage() {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
   }, [sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step, appScreen, currentProjectId, saveProjectState]);
+
+  // Close image preview on Escape
+  useEffect(() => {
+    if (!previewImage) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreviewImage(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewImage]);
 
   // ── Subscription Helpers ──
 
@@ -3698,22 +3753,48 @@ export default function HomePage() {
                       // For display in copy-prompt dialog, use the full prompt
                       const displayPrompt = fullPrompt;
                       const historyForPanel = (expandedItem && developedItems[expandedItem]?.visualImageHistory?.[layer.key]) || [];
+                      const isLocked = isLayerLocked(layer.key);
                       return (
-                        <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""}`} data-testid={`card-visual-${layer.key}`}>
+                        <Card key={layer.key} className={`overflow-hidden ${isCustom ? "border-primary/30 border-2" : ""} ${isLocked ? "ring-1 ring-amber-400/60" : ""}`} data-testid={`card-visual-${layer.key}`}>
                           {img ? (
-                            <div className="relative w-full aspect-video overflow-hidden">
-                              <img
-                                src={`data:image/png;base64,${img}`}
-                                alt={layer.title}
-                                className="w-full h-full object-cover"
-                              />
-                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+                            <div className="relative w-full aspect-video overflow-hidden group">
+                              <button
+                                type="button"
+                                className="w-full h-full block focus:outline-none focus:ring-2 focus:ring-primary"
+                                onClick={() => setPreviewImage({
+                                  layerKey: layer.key,
+                                  title: layer.title,
+                                  subtitle: layer.subtitle,
+                                  category: layer.category,
+                                  image: img,
+                                  description: layer.description,
+                                  locked: isLocked,
+                                })}
+                                aria-label={`View larger preview of ${layer.title}`}
+                                title="Click to view larger"
+                                data-testid={`button-preview-${layer.key}`}
+                              >
+                                <img
+                                  src={`data:image/png;base64,${img}`}
+                                  alt={layer.title}
+                                  className="w-full h-full object-cover"
+                                />
+                                <span className="absolute top-1 right-1 w-7 h-7 rounded bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none">
+                                  <Maximize2 className="w-3.5 h-3.5" />
+                                </span>
+                              </button>
+                              {isLocked && (
+                                <div className="absolute top-1 right-10 flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[9px] font-semibold uppercase tracking-wider pointer-events-none">
+                                  <Lock className="w-3 h-3" /> Locked
+                                </div>
+                              )}
+                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2 pointer-events-none">
                                 <p className="text-xs font-medium text-white/90">{layer.title}</p>
                                 <p className="text-[10px] text-white/60 uppercase tracking-wider">{layer.subtitle}</p>
                               </div>
                               {/* Image History */}
                               {historyForPanel.length > 0 && (
-                                <div className="absolute top-1 left-1 flex items-center gap-0.5">
+                                <div className="absolute top-1 left-1 flex items-center gap-0.5 z-10">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -3833,14 +3914,17 @@ export default function HomePage() {
                                 </Button>
                                 {/* Upload external image */}
                                 <button
-                                  className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors relative"
-                                  title="Upload image (Midjourney, Leonardo, etc.)"
+                                  className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors relative ${isLocked ? "text-muted-foreground/40 cursor-not-allowed" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+                                  title={isLocked ? "Unlock this image to upload a replacement" : "Upload image (Midjourney, Leonardo, etc.)"}
+                                  aria-label={isLocked ? "Upload disabled — image locked" : "Upload image"}
+                                  onClick={(e) => { if (isLocked) e.preventDefault(); }}
                                 >
                                   <Upload className="w-3.5 h-3.5" />
                                   <input
                                     type="file"
                                     accept="image/*"
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                    disabled={isLocked}
+                                    className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                                     onChange={(e) => {
                                       const file = e.target.files?.[0];
                                       if (file) handleUploadPanelImage(layer.key, file);
@@ -3849,6 +3933,25 @@ export default function HomePage() {
                                     data-testid={`upload-panel-${layer.key}`}
                                   />
                                 </button>
+                                {/* Lock / Unlock — only when an image is present */}
+                                {img && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={`w-7 h-7 ${isLocked ? "text-amber-400 hover:text-amber-300" : ""}`}
+                                    onClick={() => toggleLayerLock(layer.key)}
+                                    title={isLocked ? "Unlock image" : "Lock image (protect from regeneration)"}
+                                    aria-label={isLocked ? "Unlock image" : "Lock image"}
+                                    aria-pressed={isLocked}
+                                    data-testid={`button-lock-${layer.key}`}
+                                  >
+                                    {isLocked ? (
+                                      <Lock className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <Unlock className="w-3.5 h-3.5" />
+                                    )}
+                                  </Button>
+                                )}
                                 {/* Download image */}
                                 {img && (
                                   <Button
@@ -3880,7 +3983,8 @@ export default function HomePage() {
                                     }
                                     handleGenerateVisual(layer.key, builtPrompt);
                                   }}
-                                  disabled={!!generatingLayer}
+                                  disabled={!!generatingLayer || isLocked}
+                                  title={isLocked ? "Unlock this image to regenerate" : (img ? "Regenerate image" : "Generate image")}
                                   data-testid={`button-generate-${layer.key}`}
                                 >
                                   {isGenerating ? (
@@ -4012,6 +4116,89 @@ export default function HomePage() {
             </div>
           </div>
         )}
+
+        {/* Image Preview Lightbox */}
+        {previewImage && (() => {
+          const liveImage = (expandedItem && developedItems[expandedItem]?.visualImages?.[previewImage.layerKey]) || previewImage.image;
+          const liveLocked = isLayerLocked(previewImage.layerKey);
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+              onClick={() => setPreviewImage(null)}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Preview of ${previewImage.title}`}
+              data-testid="image-preview-modal"
+            >
+              <div
+                className="bg-card border border-border rounded-lg shadow-xl w-full max-w-[90vw] max-h-[90vh] flex flex-col overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-3 border-b border-border flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-sm truncate">{previewImage.title}</h3>
+                      <Badge variant="secondary" className="text-[9px] uppercase tracking-wider px-1.5 py-0 h-4">
+                        {previewImage.subtitle}
+                      </Badge>
+                      {liveLocked && (
+                        <Badge variant="default" className="text-[9px] uppercase tracking-wider px-1.5 py-0 h-4 bg-amber-500 text-black hover:bg-amber-500">
+                          <Lock className="w-3 h-3 mr-1" /> Locked
+                        </Badge>
+                      )}
+                    </div>
+                    {previewImage.description && (
+                      <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{previewImage.description}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="w-8 h-8"
+                      onClick={() => toggleLayerLock(previewImage.layerKey)}
+                      title={liveLocked ? "Unlock image" : "Lock image"}
+                      aria-label={liveLocked ? "Unlock image" : "Lock image"}
+                      aria-pressed={liveLocked}
+                      data-testid="button-preview-lock"
+                    >
+                      {liveLocked ? <Lock className="w-4 h-4 text-amber-400" /> : <Unlock className="w-4 h-4" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="w-8 h-8"
+                      onClick={() => handleDownloadImage(previewImage.layerKey, previewImage.title)}
+                      title="Download image"
+                      aria-label="Download image"
+                      data-testid="button-preview-download"
+                    >
+                      <Download className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="w-8 h-8"
+                      onClick={() => setPreviewImage(null)}
+                      title="Close preview"
+                      aria-label="Close preview"
+                      data-testid="button-preview-close"
+                    >
+                      <XIcon className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex-1 min-h-0 bg-[hsl(225,18%,6%)] flex items-center justify-center p-2 overflow-hidden">
+                  <img
+                    src={`data:image/png;base64,${liveImage}`}
+                    alt={previewImage.title}
+                    className="max-w-full max-h-[80vh] object-contain"
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Prompt Dialog for Midjourney */}
         {showPromptDialog && (
