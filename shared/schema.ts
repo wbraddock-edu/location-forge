@@ -199,3 +199,57 @@ export const generateImageRequestSchema = z.object({
 });
 
 export type GenerateImageRequest = z.infer<typeof generateImageRequestSchema>;
+
+// ── Location Forge: candidate pipeline + Story Forge import schemas ──
+
+// Story Forge-like import payload. All fields optional — we accept
+// whatever Story Forge provides or users paste manually.
+export const storyForgeImportSchema = z.object({
+  projectName: z.string().optional(),
+  storyWorld: z.string().optional(),
+  settingNotes: z.string().optional(),
+  worldbuildingNotes: z.string().optional(),
+  theme: z.string().optional(),
+  tone: z.string().optional(),
+  genre: z.string().optional(),
+  timePeriod: z.string().optional(),
+  actSummaries: z.array(z.string()).optional(),
+  sequenceSummaries: z.array(z.string()).optional(),
+  sceneIntents: z.array(z.object({
+    title: z.string().optional(),
+    intent: z.string().optional(),
+    locationHint: z.string().optional(),
+  })).optional(),
+  characters: z.array(z.object({
+    name: z.string(),
+    role: z.string().optional(),
+    locationAssociations: z.array(z.string()).optional(),
+  })).optional(),
+  canonPlaces: z.array(z.object({
+    name: z.string(),
+    aliases: z.array(z.string()).optional(),
+    description: z.string().optional(),
+    parent: z.string().optional(),
+  })).optional(),
+  timeline: z.array(z.object({
+    when: z.string().optional(),
+    event: z.string().optional(),
+    locationHint: z.string().optional(),
+  })).optional(),
+  rawText: z.string().optional(),
+});
+
+export type StoryForgeImport = z.infer<typeof storyForgeImportSchema>;
+
+export const extractRequestSchema = z.object({
+  projectId: z.number().optional(),
+  text: z.string().min(10),
+  knownCharacters: z.array(z.string()).optional(),
+  storyForgePlaces: z.array(z.string()).optional(),
+});
+
+export type ExtractRequest = z.infer<typeof extractRequestSchema>;
+
+// Canonical candidate/location status values.
+export const LOCATION_STATUSES = ["candidate", "developed", "canon", "approved", "archived", "rejected"] as const;
+export type LocationStatus = typeof LOCATION_STATUSES[number];

@@ -14,9 +14,19 @@ import {
   scanRequestSchema,
   analyzeRequestSchema,
   generateImageRequestSchema,
+  storyForgeImportSchema,
+  extractRequestSchema,
+  LOCATION_STATUSES,
   type LocationProfile,
   type DetectedLocation,
+  type LocationStatus,
 } from "@shared/schema";
+import {
+  extractCandidates,
+  compareCandidates,
+  redevelopProfile,
+  type ExtractedCandidate,
+} from "./locationExtractor";
 import { registerStripeRoutes, canAccessFeatures, isAdmin, isTrialActive, hasActiveSubscription } from "./stripe";
 
 declare module "express" {
@@ -1918,5 +1928,534 @@ Be concise and helpful. If you can't resolve the issue, suggest the email suppor
       console.error("AI support chat error:", err);
       return res.status(422).json({ error: err.message });
     }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Location Forge: Story Forge manual import, candidate pipeline,
+  // extractor scan, rescan/compare, redevelop, and downstream export.
+  // ────────────────────────────────────────────────────────────────────
+
+  // Helper — load project row (user-scoped) and parse state
+  function loadProjectState(projectId: number, userId: number): { project: any; state: any } | null {
+    const row = sqlite.prepare(
+      `SELECT id, name, state_json, created_at, updated_at FROM projects WHERE id = ? AND user_id = ?`
+    ).get(projectId, userId) as any;
+    if (!row) return null;
+    let state: any = {};
+    try { state = row.state_json ? JSON.parse(row.state_json) : {}; } catch { state = {}; }
+    return { project: row, state };
+  }
+
+  function saveProjectState(projectId: number, userId: number, state: any) {
+    const now = new Date().toISOString();
+    sqlite.prepare(`UPDATE projects SET state_json = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
+      .run(JSON.stringify(state), now, projectId, userId);
+  }
+
+  function candidateRowToObject(r: any): ExtractedCandidate & { id: number; status: LocationStatus; extended: any } {
+    return {
+      id: r.id,
+      name: r.name,
+      normalizedName: r.normalized_name,
+      aliases: safeJson(r.aliases_json, []),
+      type: r.type || "unknown",
+      category: r.category || "unknown",
+      sources: safeJson(r.sources_json, []),
+      occurrences: r.occurrences || 0,
+      firstOffset: 0,
+      contexts: safeJson(r.contexts_json, []),
+      associatedCharacters: safeJson(r.associated_characters_json, []),
+      parentHint: r.parent_hint || undefined,
+      confidence: typeof r.confidence === "number" ? r.confidence : 0,
+      reasons: safeJson(r.reasons_json, []),
+      status: (r.status as LocationStatus) || "candidate",
+      extended: safeJson(r.extended_json, {}),
+    } as any;
+  }
+
+  function safeJson<T>(s: string | null | undefined, fallback: T): T {
+    if (!s) return fallback;
+    try { return JSON.parse(s) as T; } catch { return fallback; }
+  }
+
+  // 1) Manual Story Forge import (JSON paste / upload / API post).
+  //    Stores the payload on the project's state so it can be used to guide
+  //    extraction, redevelopment, and canon-matching.
+  app.post("/api/location-forge/story-forge/manual-import", (req: Request, res: Response) => {
+    try {
+      const parsed = storyForgeImportSchema.safeParse(req.body?.payload ?? req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0].message });
+      }
+      const projectId = Number(req.body?.projectId);
+      if (!projectId) return res.status(400).json({ error: "projectId is required" });
+      const loaded = loadProjectState(projectId, req.userId!);
+      if (!loaded) return res.status(404).json({ error: "Project not found" });
+
+      const now = new Date().toISOString();
+      // Persist audit record
+      sqlite.prepare(
+        `INSERT INTO story_forge_imports (user_id, project_id, payload_json, created_at) VALUES (?, ?, ?, ?)`
+      ).run(req.userId!, projectId, JSON.stringify(parsed.data), now);
+
+      // Merge into project state (overwrites storyForgeContext but keeps full history in story_forge_imports)
+      const state = loaded.state || {};
+      state.storyForgeContext = parsed.data;
+      // If canonPlaces provided, seed candidates for them (manual source)
+      if (parsed.data.canonPlaces && parsed.data.canonPlaces.length) {
+        for (const p of parsed.data.canonPlaces) {
+          upsertCandidate(req.userId!, projectId, {
+            name: p.name,
+            aliases: p.aliases || [],
+            sources: ["story-forge"],
+            type: "unknown",
+            category: "unknown",
+            occurrences: 1,
+            contexts: p.description ? [p.description] : [],
+            associatedCharacters: [],
+            parentHint: p.parent,
+            confidence: 0.9,
+            reasons: ["Story Forge canon place"],
+          });
+        }
+      }
+      // Seed character-location associations
+      if (parsed.data.characters && parsed.data.characters.length) {
+        for (const c of parsed.data.characters) {
+          for (const locName of (c.locationAssociations || [])) {
+            upsertCandidate(req.userId!, projectId, {
+              name: locName,
+              aliases: [],
+              sources: ["character-associated", "story-forge"],
+              type: "unknown",
+              category: "unknown",
+              occurrences: 1,
+              contexts: [`${c.name} is associated with ${locName}`],
+              associatedCharacters: [c.name],
+              confidence: 0.7,
+              reasons: [`Story Forge: ${c.name} associated with ${locName}`],
+            });
+          }
+        }
+      }
+      saveProjectState(projectId, req.userId!, state);
+
+      return res.json({ ok: true, importedAt: now });
+    } catch (err: any) {
+      console.error("Story Forge manual import error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Upsert helper (dedupe by normalized_name within project)
+  function upsertCandidate(userId: number, projectId: number | null, cand: Partial<ExtractedCandidate> & { name: string }) {
+    const normalized = (cand.normalizedName || cand.name).toLowerCase().replace(/\s+/g, " ").trim();
+    const now = new Date().toISOString();
+    const existing = sqlite.prepare(
+      `SELECT * FROM location_candidates WHERE user_id = ? AND (project_id IS ? OR project_id = ?) AND normalized_name = ?`
+    ).get(userId, projectId ?? null, projectId ?? -1, normalized) as any;
+
+    if (existing) {
+      // Merge
+      const aliases = new Set<string>([...safeJson<string[]>(existing.aliases_json, []), ...(cand.aliases || [])]);
+      const sources = new Set<string>([...safeJson<string[]>(existing.sources_json, []), ...(cand.sources || [])]);
+      const reasons = new Set<string>([...safeJson<string[]>(existing.reasons_json, []), ...(cand.reasons || [])]);
+      const contexts = [...safeJson<string[]>(existing.contexts_json, []), ...(cand.contexts || [])].slice(0, 8);
+      const chars = new Set<string>([...safeJson<string[]>(existing.associated_characters_json, []), ...(cand.associatedCharacters || [])]);
+      const newOcc = (existing.occurrences || 0) + (cand.occurrences || 0);
+      const newConf = Math.max(existing.confidence || 0, cand.confidence || 0);
+      // Do NOT overwrite approved/canon statuses
+      const lockedStatuses = new Set(["approved", "canon"]);
+      const status = lockedStatuses.has(existing.status) ? existing.status : (existing.status || "candidate");
+      sqlite.prepare(
+        `UPDATE location_candidates SET aliases_json=?, sources_json=?, reasons_json=?, contexts_json=?, associated_characters_json=?, occurrences=?, confidence=?, status=?, type=COALESCE(NULLIF(?, 'unknown'), type), category=COALESCE(NULLIF(?, 'unknown'), category), parent_hint=COALESCE(?, parent_hint), updated_at=? WHERE id=?`
+      ).run(
+        JSON.stringify(Array.from(aliases)),
+        JSON.stringify(Array.from(sources)),
+        JSON.stringify(Array.from(reasons)),
+        JSON.stringify(contexts),
+        JSON.stringify(Array.from(chars)),
+        newOcc,
+        newConf,
+        status,
+        cand.type || "unknown",
+        cand.category || "unknown",
+        cand.parentHint || null,
+        now,
+        existing.id
+      );
+      return existing.id as number;
+    } else {
+      const result = sqlite.prepare(
+        `INSERT INTO location_candidates
+         (user_id, project_id, name, normalized_name, aliases_json, type, category, sources_json, occurrences, contexts_json, associated_characters_json, parent_hint, confidence, reasons_json, status, extended_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', '{}', ?, ?)`
+      ).run(
+        userId,
+        projectId ?? null,
+        cand.name,
+        normalized,
+        JSON.stringify(cand.aliases || []),
+        cand.type || "unknown",
+        cand.category || "unknown",
+        JSON.stringify(cand.sources || []),
+        cand.occurrences || 0,
+        JSON.stringify(cand.contexts || []),
+        JSON.stringify(cand.associatedCharacters || []),
+        cand.parentHint || null,
+        cand.confidence || 0,
+        JSON.stringify(cand.reasons || []),
+        now,
+        now
+      );
+      return Number(result.lastInsertRowid);
+    }
+  }
+
+  // 2) Extract candidates from text (deterministic, free).
+  app.post("/api/location-forge/extract", (req: Request, res: Response) => {
+    try {
+      const parsed = extractRequestSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
+
+      const { projectId, text, knownCharacters, storyForgePlaces } = parsed.data;
+      // Pull story-forge context if projectId provided
+      let sfPlaces: string[] = storyForgePlaces || [];
+      let sfChars: string[] = knownCharacters || [];
+      if (projectId) {
+        const loaded = loadProjectState(projectId, req.userId!);
+        if (loaded?.state?.storyForgeContext) {
+          const ctx = loaded.state.storyForgeContext;
+          if (ctx.canonPlaces) sfPlaces = [...sfPlaces, ...ctx.canonPlaces.map((p: any) => p.name)];
+          if (ctx.characters) sfChars = [...sfChars, ...ctx.characters.map((c: any) => c.name)];
+        }
+      }
+
+      const candidates = extractCandidates(text, {
+        knownCharacters: sfChars,
+        storyForgePlaces: sfPlaces,
+      });
+
+      // Persist candidates if projectId given
+      if (projectId) {
+        for (const c of candidates) {
+          upsertCandidate(req.userId!, projectId, c);
+        }
+      }
+
+      return res.json({ candidates, count: candidates.length });
+    } catch (err: any) {
+      console.error("Extract error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3) List candidates for a project
+  app.get("/api/location-forge/candidates", (req: Request, res: Response) => {
+    try {
+      const projectId = req.query.projectId ? Number(req.query.projectId) : null;
+      const status = (req.query.status as string) || null;
+      let rows: any[];
+      if (projectId !== null && !isNaN(projectId)) {
+        if (status) {
+          rows = sqlite.prepare(
+            `SELECT * FROM location_candidates WHERE user_id = ? AND project_id = ? AND status = ? ORDER BY confidence DESC, occurrences DESC`
+          ).all(req.userId!, projectId, status) as any[];
+        } else {
+          rows = sqlite.prepare(
+            `SELECT * FROM location_candidates WHERE user_id = ? AND project_id = ? ORDER BY confidence DESC, occurrences DESC`
+          ).all(req.userId!, projectId) as any[];
+        }
+      } else {
+        rows = sqlite.prepare(
+          `SELECT * FROM location_candidates WHERE user_id = ? ORDER BY confidence DESC, occurrences DESC LIMIT 500`
+        ).all(req.userId!) as any[];
+      }
+      return res.json({ candidates: rows.map(candidateRowToObject) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4) Update candidate (approve/merge/reject/redevelop/archive + rename + aliases)
+  app.patch("/api/location-forge/candidates/:id", (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!id) return res.status(400).json({ error: "invalid id" });
+      const existing = sqlite.prepare(`SELECT * FROM location_candidates WHERE id = ? AND user_id = ?`).get(id, req.userId!) as any;
+      if (!existing) return res.status(404).json({ error: "Candidate not found" });
+
+      const { status, name, aliases, mergeIntoId, type, category, parentHint, extended } = req.body || {};
+      const now = new Date().toISOString();
+
+      if (mergeIntoId) {
+        const target = sqlite.prepare(`SELECT * FROM location_candidates WHERE id = ? AND user_id = ?`).get(Number(mergeIntoId), req.userId!) as any;
+        if (!target) return res.status(404).json({ error: "Merge target not found" });
+        if (["approved", "canon"].includes(target.status)) {
+          // Allowed — we only add aliases to approved/canon, not overwrite profile.
+        }
+        const tAliases = new Set<string>(safeJson<string[]>(target.aliases_json, []));
+        tAliases.add(existing.name);
+        for (const a of safeJson<string[]>(existing.aliases_json, [])) tAliases.add(a);
+        sqlite.prepare(`UPDATE location_candidates SET aliases_json=?, updated_at=? WHERE id=?`)
+          .run(JSON.stringify(Array.from(tAliases)), now, target.id);
+        // Mark source as archived
+        sqlite.prepare(`UPDATE location_candidates SET status='archived', updated_at=? WHERE id=?`).run(now, existing.id);
+        return res.json({ ok: true, mergedInto: target.id });
+      }
+
+      if (status && !LOCATION_STATUSES.includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const updates: string[] = [];
+      const params: any[] = [];
+      if (status) { updates.push("status = ?"); params.push(status); }
+      if (name)   { updates.push("name = ?"); params.push(name); updates.push("normalized_name = ?"); params.push(String(name).toLowerCase().replace(/\s+/g, " ").trim()); }
+      if (aliases) { updates.push("aliases_json = ?"); params.push(JSON.stringify(aliases)); }
+      if (type)   { updates.push("type = ?"); params.push(type); }
+      if (category) { updates.push("category = ?"); params.push(category); }
+      if (parentHint !== undefined) { updates.push("parent_hint = ?"); params.push(parentHint || null); }
+      if (extended) { updates.push("extended_json = ?"); params.push(JSON.stringify(extended)); }
+      updates.push("updated_at = ?"); params.push(now);
+      params.push(id);
+      sqlite.prepare(`UPDATE location_candidates SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+      const updated = sqlite.prepare(`SELECT * FROM location_candidates WHERE id = ?`).get(id) as any;
+      return res.json({ candidate: candidateRowToObject(updated) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5) Redevelop — deterministic enrichment of a weak candidate's profile.
+  app.post("/api/location-forge/candidates/:id/redevelop", (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const row = sqlite.prepare(`SELECT * FROM location_candidates WHERE id = ? AND user_id = ?`).get(id, req.userId!) as any;
+      if (!row) return res.status(404).json({ error: "Candidate not found" });
+
+      // Safety: never overwrite approved/canon
+      if (row.status === "approved" || row.status === "canon") {
+        return res.status(409).json({ error: "Approved/canon locations cannot be silently overwritten — unlock first." });
+      }
+
+      let storyContext: any = {};
+      if (row.project_id) {
+        const loaded = loadProjectState(row.project_id, req.userId!);
+        const ctx = loaded?.state?.storyForgeContext;
+        if (ctx) {
+          storyContext = {
+            storyWorld: ctx.storyWorld,
+            theme: ctx.theme,
+            tone: ctx.tone,
+            genre: ctx.genre,
+            timePeriod: ctx.timePeriod,
+            characters: (ctx.characters || []).map((c: any) => c.name),
+          };
+        }
+      }
+
+      const cand = candidateRowToObject(row);
+      const existingProfile = safeJson<Record<string, string>>(row.extended_json, {})?.profile || {};
+      const { profile, filled } = redevelopProfile({
+        name: cand.name,
+        existingProfile,
+        candidate: cand,
+        storyContext,
+      });
+
+      const extended = safeJson<any>(row.extended_json, {});
+      extended.profile = profile;
+      extended.lastRedevelop = { filled, at: new Date().toISOString() };
+      sqlite.prepare(`UPDATE location_candidates SET extended_json = ?, status = CASE WHEN status IN ('candidate') THEN 'developed' ELSE status END, updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(extended), new Date().toISOString(), id);
+
+      return res.json({ profile, filled });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6) Rescan / Reimport compare — diff new candidates against existing canon & developed items
+  app.post("/api/location-forge/compare", (req: Request, res: Response) => {
+    try {
+      const { projectId, text } = req.body || {};
+      if (!projectId || !text || typeof text !== "string") {
+        return res.status(400).json({ error: "projectId and text required" });
+      }
+      const loaded = loadProjectState(Number(projectId), req.userId!);
+      if (!loaded) return res.status(404).json({ error: "Project not found" });
+
+      const ctx = loaded.state?.storyForgeContext || {};
+      const knownChars = (ctx.characters || []).map((c: any) => c.name);
+      const sfPlaces = (ctx.canonPlaces || []).map((p: any) => p.name);
+
+      const candidates = extractCandidates(text, { knownCharacters: knownChars, storyForgePlaces: sfPlaces });
+
+      // Existing developed items from project state
+      const developedItems = loaded.state?.developedItems || {};
+      const existing: Array<{ name: string; aliases?: string[]; status?: string; profile?: any }> = [];
+      for (const [name, dev] of Object.entries(developedItems)) {
+        const d = dev as any;
+        existing.push({ name, aliases: d.aliases || [], status: d.status || "developed", profile: d.profile });
+      }
+      // Existing approved/canon candidates from our table
+      const candRows = sqlite.prepare(
+        `SELECT * FROM location_candidates WHERE user_id = ? AND project_id = ? AND status IN ('approved','canon','developed')`
+      ).all(req.userId!, Number(projectId)) as any[];
+      for (const r of candRows) {
+        existing.push({ name: r.name, aliases: safeJson(r.aliases_json, []), status: r.status });
+      }
+
+      const summary = compareCandidates(candidates, existing);
+      return res.json(summary);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7) Promote a developed-project item to a candidate/approved record
+  //    (backward-compatible bridge between existing UI's developedItems and the new table)
+  app.post("/api/location-forge/sync-developed", (req: Request, res: Response) => {
+    try {
+      const { projectId } = req.body || {};
+      if (!projectId) return res.status(400).json({ error: "projectId required" });
+      const loaded = loadProjectState(Number(projectId), req.userId!);
+      if (!loaded) return res.status(404).json({ error: "Project not found" });
+
+      const developedItems = loaded.state?.developedItems || {};
+      let synced = 0;
+      for (const [name, dev] of Object.entries(developedItems)) {
+        const d = dev as any;
+        upsertCandidate(req.userId!, Number(projectId), {
+          name,
+          aliases: d.aliases || [],
+          sources: ["manual"],
+          type: d.profile?.type || "unknown",
+          category: "unknown",
+          occurrences: 1,
+          contexts: [d.profile?.logline || ""].filter(Boolean),
+          associatedCharacters: [],
+          confidence: 0.8,
+          reasons: ["Promoted from developed items"],
+        });
+        // Store the profile in extended.
+        const normalized = name.toLowerCase().replace(/\s+/g, " ").trim();
+        const row = sqlite.prepare(`SELECT id, extended_json, status FROM location_candidates WHERE user_id = ? AND project_id = ? AND normalized_name = ?`).get(req.userId!, Number(projectId), normalized) as any;
+        if (row && !["approved", "canon"].includes(row.status)) {
+          const ext = safeJson<any>(row.extended_json, {});
+          ext.profile = d.profile;
+          sqlite.prepare(`UPDATE location_candidates SET extended_json = ?, status = CASE WHEN status IN ('candidate') THEN 'developed' ELSE status END, updated_at = ? WHERE id = ?`)
+            .run(JSON.stringify(ext), new Date().toISOString(), row.id);
+        }
+        synced++;
+      }
+      return res.json({ ok: true, synced });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 8) Downstream export — approved/canon locations JSON for Scene Forge / Production Forge.
+  //    Read-only; does not mutate any state. Can be fetched by downstream apps with session auth.
+  app.get("/api/location-forge/export/locations", (req: Request, res: Response) => {
+    try {
+      const projectId = req.query.projectId ? Number(req.query.projectId) : null;
+      const includeDeveloped = req.query.includeDeveloped === "1";
+      const statuses = includeDeveloped ? ["approved", "canon", "developed"] : ["approved", "canon"];
+
+      let rows: any[];
+      if (projectId) {
+        rows = sqlite.prepare(
+          `SELECT * FROM location_candidates WHERE user_id = ? AND project_id = ? AND status IN (${statuses.map(() => "?").join(",")})`
+        ).all(req.userId!, projectId, ...statuses) as any[];
+      } else {
+        rows = sqlite.prepare(
+          `SELECT * FROM location_candidates WHERE user_id = ? AND status IN (${statuses.map(() => "?").join(",")})`
+        ).all(req.userId!, ...statuses) as any[];
+      }
+
+      const locations = rows.map((r) => {
+        const extended = safeJson<any>(r.extended_json, {});
+        return {
+          id: r.id,
+          canonicalName: r.name,
+          aliases: safeJson<string[]>(r.aliases_json, []),
+          type: r.type,
+          category: r.category,
+          parent: r.parent_hint || null,
+          status: r.status,
+          storyWorld: extended.storyWorld || null,
+          narrativeFunction: extended.profile?.storyEventsHere || null,
+          emotionalTone: extended.profile?.defaultEmotionalTone || null,
+          sensoryProfile: extended.profile ? {
+            sounds: extended.profile.defaultSounds,
+            smells: extended.profile.smells,
+            light: extended.profile.lightQuality,
+            temperature: extended.profile.temperatureAirQuality,
+            tactile: extended.profile.tactileSurfaces,
+          } : null,
+          timePeriod: extended.profile?.timePeriod || null,
+          characterAssociations: safeJson<string[]>(r.associated_characters_json, []),
+          sceneUsageReferences: extended.sceneUsageReferences || [],
+          props: extended.profile?.keyProps || null,
+          continuityNotes: extended.profile?.practicalConsiderations || null,
+          productionConstraints: extended.profile?.vfxNotes || null,
+          aiImagePrompt: extended.profile?.visualEstablishing || null,
+          sourceReferences: safeJson<string[]>(r.contexts_json, []),
+          profile: extended.profile || null,
+          updatedAt: r.updated_at,
+        };
+      });
+
+      res.setHeader("Content-Type", "application/json");
+      if (req.query.download === "1") {
+        res.setHeader("Content-Disposition", `attachment; filename="locations.json"`);
+      }
+      return res.json({ locations, count: locations.length, exportedAt: new Date().toISOString() });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 9) Shared cross-app export (for downstream Forges with the shared secret).
+  //    Returns the same shape as the authenticated export, gated by FORGE_CROSS_APP_SECRET.
+  app.get("/api/shared/location-forge/locations", (req: Request, res: Response) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    const { email, secret, project: projectName, includeDeveloped } = req.query as any;
+    const expectedSecret = process.env.FORGE_CROSS_APP_SECRET;
+    if (!expectedSecret || !secret || secret !== expectedSecret) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!email) return res.status(400).json({ error: "email is required" });
+    const user = sqlite.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+    if (!user) return res.json({ locations: [] });
+    const statuses = includeDeveloped === "1" ? ["approved", "canon", "developed"] : ["approved", "canon"];
+    let rows: any[];
+    if (projectName) {
+      const proj = sqlite.prepare(`SELECT id FROM projects WHERE user_id = ? AND LOWER(name) = LOWER(?)`).get(user.id, projectName) as any;
+      if (!proj) return res.json({ locations: [] });
+      rows = sqlite.prepare(
+        `SELECT * FROM location_candidates WHERE user_id = ? AND project_id = ? AND status IN (${statuses.map(() => "?").join(",")})`
+      ).all(user.id, proj.id, ...statuses) as any[];
+    } else {
+      rows = sqlite.prepare(
+        `SELECT * FROM location_candidates WHERE user_id = ? AND status IN (${statuses.map(() => "?").join(",")})`
+      ).all(user.id, ...statuses) as any[];
+    }
+    const locations = rows.map((r) => {
+      const extended = safeJson<any>(r.extended_json, {});
+      return {
+        id: r.id,
+        canonicalName: r.name,
+        aliases: safeJson<string[]>(r.aliases_json, []),
+        type: r.type, category: r.category,
+        parent: r.parent_hint || null, status: r.status,
+        profile: extended.profile || null,
+        characterAssociations: safeJson<string[]>(r.associated_characters_json, []),
+        updatedAt: r.updated_at,
+      };
+    });
+    return res.json({ locations, count: locations.length });
   });
 }

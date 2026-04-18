@@ -59,6 +59,34 @@ sqlite.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS location_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    project_id INTEGER,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    aliases_json TEXT NOT NULL DEFAULT '[]',
+    type TEXT,
+    category TEXT,
+    sources_json TEXT NOT NULL DEFAULT '[]',
+    occurrences INTEGER DEFAULT 0,
+    contexts_json TEXT NOT NULL DEFAULT '[]',
+    associated_characters_json TEXT NOT NULL DEFAULT '[]',
+    parent_hint TEXT,
+    confidence REAL DEFAULT 0,
+    reasons_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'candidate',
+    extended_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS story_forge_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    project_id INTEGER,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS support_tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,

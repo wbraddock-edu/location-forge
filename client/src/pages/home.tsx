@@ -292,6 +292,14 @@ export default function HomePage() {
   // ── Subscription State ──
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
 
+  // ── Location Forge Pipeline State ──
+  const [lfPipelineOpen, setLfPipelineOpen] = useState(false);
+  const [lfStoryJson, setLfStoryJson] = useState("");
+  const [lfBusy, setLfBusy] = useState<string | null>(null);
+  const [lfCandidates, setLfCandidates] = useState<any[]>([]);
+  const [lfCompareResult, setLfCompareResult] = useState<any>(null);
+  const [lfFilterStatus, setLfFilterStatus] = useState<string>("");
+
   // Auto-save timer ref
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1966,6 +1974,224 @@ export default function HomePage() {
                       </>
                     )}
                   </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Location Forge Pipeline (Story Forge context · Candidate review · Export) ── */}
+          <div className="mt-8">
+            <button
+              onClick={() => setLfPipelineOpen(!lfPipelineOpen)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-left"
+              style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}
+            >
+              <div className="flex items-center gap-2">
+                <Ruler className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Location Forge Pipeline — Story context · Candidates · Export</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 transition-transform ${lfPipelineOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
+            </button>
+            {lfPipelineOpen && (
+              <div className="mt-2 rounded-lg p-4 space-y-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                {!currentProjectId && (
+                  <p className="text-xs" style={{ color: "hsl(220,5%,52%)" }}>Open or create a project first to use the pipeline.</p>
+                )}
+                {currentProjectId && (
+                  <>
+                    {/* Story Forge Manual Import */}
+                    <div>
+                      <div className="text-xs font-mono mb-1" style={{ color: "hsl(220,5%,52%)" }}>Paste Story Forge JSON context (storyWorld / theme / tone / characters / canonPlaces…)</div>
+                      <textarea
+                        value={lfStoryJson}
+                        onChange={(e) => setLfStoryJson(e.target.value)}
+                        placeholder='{"storyWorld":"Harrow County","theme":"decay","tone":"melancholic","characters":[{"name":"Sarah","locationAssociations":["Old Mill"]}],"canonPlaces":[{"name":"Smith House","aliases":["Smith residence"]}]}'
+                        className="w-full h-24 text-xs font-mono p-2 rounded"
+                        style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={lfBusy !== null}
+                        onClick={async () => {
+                          setLfBusy("import");
+                          try {
+                            const payload = lfStoryJson.trim() ? JSON.parse(lfStoryJson) : {};
+                            const res = await apiRequest("POST", "/api/location-forge/story-forge/manual-import", { projectId: currentProjectId, payload });
+                            await res.json();
+                            toast({ title: "Story Forge context imported" });
+                          } catch (err: any) {
+                            toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                          }
+                          setLfBusy(null);
+                        }}
+                        className="mt-2 bg-[#00d4aa] hover:bg-[#00b894] text-black"
+                      >
+                        {lfBusy === "import" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Import Story Context"}
+                      </Button>
+                    </div>
+
+                    {/* Extract + Compare */}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        disabled={lfBusy !== null || !sourceText || sourceText.length < 50}
+                        onClick={async () => {
+                          setLfBusy("extract");
+                          try {
+                            const res = await apiRequest("POST", "/api/location-forge/extract", { projectId: currentProjectId, text: sourceText });
+                            const data = await res.json();
+                            toast({ title: `Extracted ${data.count} candidates` });
+                            const list = await apiRequest("GET", `/api/location-forge/candidates?projectId=${currentProjectId}`);
+                            setLfCandidates((await list.json()).candidates || []);
+                          } catch (err: any) {
+                            toast({ title: "Extract failed", description: err.message, variant: "destructive" });
+                          }
+                          setLfBusy(null);
+                        }}
+                      >
+                        {lfBusy === "extract" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Scan Source Text → Candidates"}
+                      </Button>
+                      <Button
+                        size="sm" variant="outline"
+                        disabled={lfBusy !== null || !sourceText}
+                        onClick={async () => {
+                          setLfBusy("compare");
+                          try {
+                            const res = await apiRequest("POST", "/api/location-forge/compare", { projectId: currentProjectId, text: sourceText });
+                            const data = await res.json();
+                            setLfCompareResult(data);
+                            toast({ title: `Compare: ${data.entries.length} entries, ${data.missingFromScript.length} missing` });
+                          } catch (err: any) {
+                            toast({ title: "Compare failed", description: err.message, variant: "destructive" });
+                          }
+                          setLfBusy(null);
+                        }}
+                      >
+                        Rescan / Reimport Compare
+                      </Button>
+                      <Button
+                        size="sm" variant="outline"
+                        disabled={lfBusy !== null}
+                        onClick={async () => {
+                          setLfBusy("sync");
+                          try {
+                            const res = await apiRequest("POST", "/api/location-forge/sync-developed", { projectId: currentProjectId });
+                            const data = await res.json();
+                            toast({ title: `Synced ${data.synced} developed locations to candidate table` });
+                            const list = await apiRequest("GET", `/api/location-forge/candidates?projectId=${currentProjectId}`);
+                            setLfCandidates((await list.json()).candidates || []);
+                          } catch (err: any) {
+                            toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+                          }
+                          setLfBusy(null);
+                        }}
+                      >
+                        Sync Developed → Candidates
+                      </Button>
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={async () => {
+                          try {
+                            const res = await apiRequest("GET", `/api/location-forge/export/locations?projectId=${currentProjectId}&download=1&includeDeveloped=1`);
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = "locations.json";
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          } catch (err: any) {
+                            toast({ title: "Export failed", description: err.message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        Export Approved Locations JSON
+                      </Button>
+                    </div>
+
+                    {/* Compare result summary */}
+                    {lfCompareResult && (
+                      <div className="text-xs p-3 rounded" style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,75%)" }}>
+                        <div className="font-mono mb-1">Compare Summary</div>
+                        <div>New: {lfCompareResult.entries.filter((e: any) => e.status === "new").length} · Alias: {lfCompareResult.entries.filter((e: any) => e.status === "alias").length} · Duplicate: {lfCompareResult.entries.filter((e: any) => e.status === "duplicate").length} · Needs-dev: {lfCompareResult.entries.filter((e: any) => e.status === "needs-development").length}</div>
+                        {lfCompareResult.missingFromScript.length > 0 && (
+                          <div className="mt-1 text-amber-400">Missing from new scan: {lfCompareResult.missingFromScript.join(", ")}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Candidate list */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs font-mono" style={{ color: "hsl(220,5%,52%)" }}>Candidates ({lfCandidates.length})</div>
+                        <select
+                          value={lfFilterStatus}
+                          onChange={(e) => setLfFilterStatus(e.target.value)}
+                          className="text-xs px-2 py-1 rounded"
+                          style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}
+                        >
+                          <option value="">All</option>
+                          <option value="candidate">Candidate</option>
+                          <option value="developed">Developed</option>
+                          <option value="approved">Approved</option>
+                          <option value="canon">Canon</option>
+                          <option value="archived">Archived</option>
+                          <option value="rejected">Rejected</option>
+                        </select>
+                      </div>
+                      <div className="max-h-96 overflow-y-auto space-y-1">
+                        {lfCandidates
+                          .filter((c: any) => !lfFilterStatus || c.status === lfFilterStatus)
+                          .map((c: any) => (
+                            <div key={c.id} className="flex items-center gap-2 px-2 py-2 rounded text-xs"
+                              style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(180,5%,88%)" }}>
+                              <span className="font-semibold flex-1 truncate">{c.name}</span>
+                              <span className="font-mono text-[10px]" style={{ color: "hsl(220,5%,52%)" }}>
+                                {c.type} · {c.category} · conf {Math.round((c.confidence || 0) * 100)}%
+                              </span>
+                              <span className="font-mono text-[10px] px-1 py-0.5 rounded"
+                                style={{
+                                  background: c.status === "approved" || c.status === "canon" ? "hsl(163,60%,20%)"
+                                    : c.status === "rejected" || c.status === "archived" ? "hsl(0,30%,20%)"
+                                    : "hsl(225,10%,18%)",
+                                  color: "hsl(180,5%,88%)"
+                                }}>{c.status}</span>
+                              <button
+                                className="text-[10px] underline"
+                                style={{ color: "hsl(163,100%,42%)" }}
+                                onClick={async () => {
+                                  await apiRequest("POST", `/api/location-forge/candidates/${c.id}/redevelop`, {});
+                                  const list = await apiRequest("GET", `/api/location-forge/candidates?projectId=${currentProjectId}`);
+                                  setLfCandidates((await list.json()).candidates || []);
+                                  toast({ title: `Redeveloped ${c.name}` });
+                                }}
+                              >Redevelop</button>
+                              <button
+                                className="text-[10px] underline"
+                                style={{ color: "hsl(163,100%,42%)" }}
+                                onClick={async () => {
+                                  await apiRequest("PATCH", `/api/location-forge/candidates/${c.id}`, { status: "approved" });
+                                  const list = await apiRequest("GET", `/api/location-forge/candidates?projectId=${currentProjectId}`);
+                                  setLfCandidates((await list.json()).candidates || []);
+                                }}
+                              >Approve</button>
+                              <button
+                                className="text-[10px] underline"
+                                style={{ color: "hsl(0,70%,60%)" }}
+                                onClick={async () => {
+                                  await apiRequest("PATCH", `/api/location-forge/candidates/${c.id}`, { status: "rejected" });
+                                  const list = await apiRequest("GET", `/api/location-forge/candidates?projectId=${currentProjectId}`);
+                                  setLfCandidates((await list.json()).candidates || []);
+                                }}
+                              >Reject</button>
+                            </div>
+                          ))}
+                        {lfCandidates.length === 0 && (
+                          <div className="text-xs text-center py-4" style={{ color: "hsl(220,5%,52%)" }}>No candidates yet — run a scan or sync developed items.</div>
+                        )}
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             )}
