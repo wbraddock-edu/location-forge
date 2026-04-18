@@ -1119,13 +1119,35 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
   app.post("/api/story-forge/import-project", async (req: Request, res: Response) => {
     try {
-      const { projectName, chapters } = req.body;
-      if (!projectName || !Array.isArray(chapters) || chapters.length === 0) {
-        return res.status(400).json({ error: "projectName and chapters[] required" });
+      const { projectName, chapters, projectId, mode } = req.body;
+      if (!Array.isArray(chapters) || chapters.length === 0) {
+        return res.status(400).json({ error: "chapters[] required" });
       }
-      const sourceText = chapters.map((ch: any) => ch.text || ch.content || "").join("\n\n");
+      const importedText = chapters.map((ch: any) => ch.text || ch.content || "").join("\n\n");
       const now = new Date().toISOString();
-      const stateJson = JSON.stringify({ sourceText, sourceType: "story" });
+
+      // If projectId supplied, append/replace text in the existing project
+      if (projectId) {
+        const row = sqlite.prepare(
+          `SELECT id, name, state_json FROM projects WHERE id = ? AND user_id = ?`
+        ).get(Number(projectId), req.userId!) as any;
+        if (!row) return res.status(404).json({ error: "Project not found" });
+        let state: any = {};
+        try { state = row.state_json ? JSON.parse(row.state_json) : {}; } catch { state = {}; }
+        const existing = typeof state.sourceText === "string" ? state.sourceText : "";
+        state.sourceText = mode === "replace" || !existing
+          ? importedText
+          : `${existing}\n\n${importedText}`;
+        state.sourceType = state.sourceType || "story";
+        sqlite.prepare(`UPDATE projects SET state_json = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
+          .run(JSON.stringify(state), now, Number(projectId), req.userId!);
+        return res.json({ id: row.id, name: row.name, sourceText: state.sourceText, appended: mode !== "replace" });
+      }
+
+      if (!projectName) {
+        return res.status(400).json({ error: "projectName or projectId required" });
+      }
+      const stateJson = JSON.stringify({ sourceText: importedText, sourceType: "story" });
       const result = sqlite.prepare(
         `INSERT INTO projects (user_id, name, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
       ).run(req.userId!, projectName.trim(), stateJson, now, now);
@@ -1175,13 +1197,34 @@ export async function registerRoutes(httpServer: Server, app: Express) {
 
   app.post("/api/manuscript-forge/import-project", async (req: Request, res: Response) => {
     try {
-      const { projectName, chapters } = req.body;
-      if (!projectName || !Array.isArray(chapters) || chapters.length === 0) {
-        return res.status(400).json({ error: "projectName and chapters[] required" });
+      const { projectName, chapters, projectId, mode } = req.body;
+      if (!Array.isArray(chapters) || chapters.length === 0) {
+        return res.status(400).json({ error: "chapters[] required" });
       }
-      const sourceText = chapters.map((ch: any) => ch.text || ch.content || "").join("\n\n");
+      const importedText = chapters.map((ch: any) => ch.text || ch.content || "").join("\n\n");
       const now = new Date().toISOString();
-      const stateJson = JSON.stringify({ sourceText, sourceType: "story" });
+
+      if (projectId) {
+        const row = sqlite.prepare(
+          `SELECT id, name, state_json FROM projects WHERE id = ? AND user_id = ?`
+        ).get(Number(projectId), req.userId!) as any;
+        if (!row) return res.status(404).json({ error: "Project not found" });
+        let state: any = {};
+        try { state = row.state_json ? JSON.parse(row.state_json) : {}; } catch { state = {}; }
+        const existing = typeof state.sourceText === "string" ? state.sourceText : "";
+        state.sourceText = mode === "replace" || !existing
+          ? importedText
+          : `${existing}\n\n${importedText}`;
+        state.sourceType = state.sourceType || "story";
+        sqlite.prepare(`UPDATE projects SET state_json = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
+          .run(JSON.stringify(state), now, Number(projectId), req.userId!);
+        return res.json({ id: row.id, name: row.name, sourceText: state.sourceText, appended: mode !== "replace" });
+      }
+
+      if (!projectName) {
+        return res.status(400).json({ error: "projectName or projectId required" });
+      }
+      const stateJson = JSON.stringify({ sourceText: importedText, sourceType: "story" });
       const result = sqlite.prepare(
         `INSERT INTO projects (user_id, name, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
       ).run(req.userId!, projectName.trim(), stateJson, now, now);

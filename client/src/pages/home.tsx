@@ -300,6 +300,12 @@ export default function HomePage() {
   const [lfCompareResult, setLfCompareResult] = useState<any>(null);
   const [lfFilterStatus, setLfFilterStatus] = useState<string>("");
 
+  // ── In-Project Story Forge Import (on Build Location Profiles screen) ──
+  const [inProjectSfOpen, setInProjectSfOpen] = useState(false);
+  const [inProjectSfMode, setInProjectSfMode] = useState<"chapters" | "context">("chapters");
+  const [inProjectSfContextJson, setInProjectSfContextJson] = useState("");
+  const [inProjectSfBusy, setInProjectSfBusy] = useState(false);
+
   // Auto-save timer ref
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1994,11 +2000,23 @@ export default function HomePage() {
             </button>
             {lfPipelineOpen && (
               <div className="mt-2 rounded-lg p-4 space-y-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+                <div className="text-xs leading-relaxed" style={{ color: "hsl(220,5%,62%)" }}>
+                  The pipeline enriches the <span style={{ color: "hsl(180,5%,88%)" }}>currently open project</span> with Story Forge
+                  context (world / theme / tone / canon places / character-location associations), scans the source text for
+                  candidate locations, lets you rescan when the manuscript changes, redevelop profiles, and export approved
+                  locations as JSON.
+                </div>
                 {!currentProjectId && (
-                  <p className="text-xs" style={{ color: "hsl(220,5%,52%)" }}>Open or create a project first to use the pipeline.</p>
+                  <div className="text-xs p-3 rounded" style={{ background: "hsl(225,15%,8%)", border: "1px solid hsl(225,10%,14%)", color: "hsl(220,5%,62%)" }}>
+                    Open an existing project below, or use <span style={{ color: "hsl(163,100%,42%)" }}>Import from Story Forge</span> above
+                    to create one. The pipeline attaches to whichever project is currently open.
+                  </div>
                 )}
                 {currentProjectId && (
                   <>
+                    <div className="text-xs font-mono px-2 py-1 rounded inline-block" style={{ background: "hsl(163,60%,12%)", color: "hsl(163,100%,62%)" }}>
+                      Pipeline attached to: {currentProjectName || `#${currentProjectId}`}
+                    </div>
                     {/* Story Forge Manual Import */}
                     <div>
                       <div className="text-xs font-mono mb-1" style={{ color: "hsl(220,5%,52%)" }}>Paste Story Forge JSON context (storyWorld / theme / tone / characters / canonPlaces…)</div>
@@ -2808,6 +2826,224 @@ export default function HomePage() {
                       Location Description
                     </Button>
                   </div>
+
+                  {/* In-project Story Forge import */}
+                  {currentProjectId && (
+                    <div className="rounded-lg border border-border">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const opening = !inProjectSfOpen;
+                          setInProjectSfOpen(opening);
+                          if (opening && sfProjects.length === 0) {
+                            setSfProjectsLoading(true);
+                            try {
+                              const res = await apiRequest("GET", "/api/story-forge/projects");
+                              const data = await res.json();
+                              setSfProjects(data.projects || []);
+                            } catch { /* silent */ }
+                            setSfProjectsLoading(false);
+                          }
+                        }}
+                        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+                        data-testid="button-in-project-sf-toggle"
+                      >
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-primary" />
+                          <span className="text-sm font-medium">Import from Story Forge</span>
+                          <span className="text-[10px] text-muted-foreground font-mono">into this project</span>
+                        </div>
+                        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${inProjectSfOpen ? "rotate-180" : ""}`} />
+                      </button>
+                      {inProjectSfOpen && (
+                        <div className="px-3 pb-3 pt-1 space-y-3 border-t border-border">
+                          <div className="flex gap-1 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setInProjectSfMode("chapters")}
+                              className={`px-2 py-1 rounded ${inProjectSfMode === "chapters" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                              data-testid="button-sf-mode-chapters"
+                            >
+                              Chapters → Source Text
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setInProjectSfMode("context")}
+                              className={`px-2 py-1 rounded ${inProjectSfMode === "context" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                              data-testid="button-sf-mode-context"
+                            >
+                              Paste Context JSON
+                            </button>
+                          </div>
+
+                          {inProjectSfMode === "chapters" ? (
+                            <div>
+                              <p className="text-[11px] text-muted-foreground mb-2">
+                                Pick chapters from a Story Forge project; their text will be appended to this project's
+                                Source Text (so the AI scan includes it).
+                              </p>
+                              {sfProjectsLoading ? (
+                                <div className="py-4 text-center"><Loader2 className="w-4 h-4 animate-spin mx-auto text-primary" /></div>
+                              ) : sfProjects.length === 0 ? (
+                                <p className="text-xs text-muted-foreground py-2">No Story Forge projects found for your account.</p>
+                              ) : !sfSelectedProject ? (
+                                <div className="grid gap-1">
+                                  {sfProjects.map((p) => (
+                                    <button
+                                      type="button"
+                                      key={p.id}
+                                      onClick={async () => {
+                                        setSfSelectedProject(p.name);
+                                        setSfChaptersLoading(true);
+                                        setSfSelectedChapters(new Set());
+                                        try {
+                                          const res = await apiRequest("GET", `/api/story-forge/chapters?project=${encodeURIComponent(p.name)}`);
+                                          const data = await res.json();
+                                          setSfChapters(data.chapters || []);
+                                        } catch { /* silent */ }
+                                        setSfChaptersLoading(false);
+                                      }}
+                                      className="flex items-center gap-2 px-2 py-1.5 rounded text-left text-sm hover:bg-muted/50"
+                                      data-testid={`button-sf-project-${p.id}`}
+                                    >
+                                      <BookOpen className="w-3.5 h-3.5 text-primary shrink-0" />
+                                      <span className="truncate">{p.name}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => { setSfSelectedProject(null); setSfChapters([]); setSfSelectedChapters(new Set()); }}
+                                      className="text-[11px] underline text-primary"
+                                    >
+                                      ← Back
+                                    </button>
+                                    <span className="text-[10px] font-mono text-muted-foreground">{sfSelectedChapters.size} selected</span>
+                                  </div>
+                                  {sfChaptersLoading ? (
+                                    <div className="py-4 text-center"><Loader2 className="w-4 h-4 animate-spin mx-auto text-primary" /></div>
+                                  ) : sfChapters.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground py-2">No chapters found in this project.</p>
+                                  ) : (
+                                    <>
+                                      <div className="mb-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (sfSelectedChapters.size === sfChapters.length) setSfSelectedChapters(new Set());
+                                            else setSfSelectedChapters(new Set(sfChapters.map((_, i) => i)));
+                                          }}
+                                          className="text-[10px] underline text-primary"
+                                        >
+                                          {sfSelectedChapters.size === sfChapters.length ? "Deselect all" : "Select all"}
+                                        </button>
+                                      </div>
+                                      <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                                        {sfChapters.map((ch, i) => {
+                                          const wc = ch.wordCount ?? (ch.text || ch.content || "").split(/\s+/).filter(Boolean).length;
+                                          return (
+                                            <label key={i} className="flex items-center gap-2 px-1.5 py-1 rounded cursor-pointer hover:bg-muted/50">
+                                              <input
+                                                type="checkbox"
+                                                checked={sfSelectedChapters.has(i)}
+                                                onChange={() => {
+                                                  const next = new Set(sfSelectedChapters);
+                                                  next.has(i) ? next.delete(i) : next.add(i);
+                                                  setSfSelectedChapters(next);
+                                                }}
+                                                className="accent-primary"
+                                              />
+                                              <span className="text-xs truncate flex-1">{ch.title || `Chapter ${i + 1}`}</span>
+                                              <span className="text-[10px] font-mono text-muted-foreground shrink-0">{wc.toLocaleString()} words</span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                      <Button
+                                        size="sm"
+                                        disabled={sfSelectedChapters.size === 0 || inProjectSfBusy}
+                                        onClick={async () => {
+                                          setInProjectSfBusy(true);
+                                          try {
+                                            const selected = [...sfSelectedChapters].sort().map((i) => sfChapters[i]);
+                                            const res = await apiRequest("POST", "/api/story-forge/import-project", {
+                                              projectId: currentProjectId,
+                                              chapters: selected,
+                                              mode: "append",
+                                            });
+                                            const data = await res.json();
+                                            if (typeof data.sourceText === "string") {
+                                              setSourceText(data.sourceText);
+                                              setSourceType("story");
+                                            }
+                                            toast({
+                                              title: `Imported ${selected.length} chapter${selected.length !== 1 ? "s" : ""}`,
+                                              description: "Appended to Source Text.",
+                                            });
+                                            setSfSelectedChapters(new Set());
+                                          } catch (err: any) {
+                                            toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                                          }
+                                          setInProjectSfBusy(false);
+                                        }}
+                                        className="mt-2 w-full"
+                                        data-testid="button-sf-append"
+                                      >
+                                        {inProjectSfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+                                        Append to this project's Source Text
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <p className="text-[11px] text-muted-foreground mb-2">
+                                Paste Story Forge context JSON (storyWorld / theme / tone / characters / canonPlaces…).
+                                Saved to this project and used to seed candidate locations in the pipeline.
+                              </p>
+                              <Textarea
+                                value={inProjectSfContextJson}
+                                onChange={(e) => setInProjectSfContextJson(e.target.value)}
+                                placeholder='{"storyWorld":"Harrow County","theme":"decay","characters":[{"name":"Sarah","locationAssociations":["Old Mill"]}],"canonPlaces":[{"name":"Smith House"}]}'
+                                className="min-h-[100px] text-xs font-mono"
+                                data-testid="input-sf-context-json"
+                              />
+                              <Button
+                                size="sm"
+                                disabled={inProjectSfBusy || !inProjectSfContextJson.trim()}
+                                onClick={async () => {
+                                  setInProjectSfBusy(true);
+                                  try {
+                                    const payload = JSON.parse(inProjectSfContextJson);
+                                    const res = await apiRequest("POST", "/api/location-forge/story-forge/manual-import", {
+                                      projectId: currentProjectId,
+                                      payload,
+                                    });
+                                    await res.json();
+                                    toast({ title: "Story Forge context saved to this project" });
+                                    setInProjectSfContextJson("");
+                                  } catch (err: any) {
+                                    toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                                  }
+                                  setInProjectSfBusy(false);
+                                }}
+                                className="mt-2"
+                                data-testid="button-sf-context-save"
+                              >
+                                {inProjectSfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+                                Save Context to Project
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* File upload */}
                   <div>
