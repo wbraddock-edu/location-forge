@@ -300,6 +300,18 @@ export default function HomePage() {
   const [lfCompareResult, setLfCompareResult] = useState<any>(null);
   const [lfFilterStatus, setLfFilterStatus] = useState<string>("");
 
+  // ── In-Project Story Forge Import State (used on Build Location Profiles screen) ──
+  const [inProjSfMode, setInProjSfMode] = useState<"closed" | "chapters" | "json">("closed");
+  const [inProjSfProjects, setInProjSfProjects] = useState<Array<{ id: number; name: string }>>([]);
+  const [inProjSfProjectsLoading, setInProjSfProjectsLoading] = useState(false);
+  const [inProjSfSelectedProject, setInProjSfSelectedProject] = useState<string | null>(null);
+  const [inProjSfChapters, setInProjSfChapters] = useState<Array<{ title: string; text?: string; content?: string; wordCount?: number }>>([]);
+  const [inProjSfChaptersLoading, setInProjSfChaptersLoading] = useState(false);
+  const [inProjSfSelectedChapters, setInProjSfSelectedChapters] = useState<Set<number>>(new Set());
+  const [inProjSfImporting, setInProjSfImporting] = useState(false);
+  const [inProjSfJson, setInProjSfJson] = useState("");
+  const [inProjSfJsonImporting, setInProjSfJsonImporting] = useState(false);
+
   // Auto-save timer ref
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1677,11 +1689,16 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* ── Import from Story Forge ── */}
+          {/* ── Import from Story Forge (creates a NEW project) ── */}
           <div className="mt-8">
-            <button
-              onClick={async () => {
-                const opening = !sfImportOpen;
+            <p className="text-xs mb-2" style={{ color: "hsl(220,5%,52%)" }}>
+              Start a new project by pulling chapters from another Forge app, or open an existing project above to
+              import Story Forge context into it.
+            </p>
+            <details
+              open={sfImportOpen}
+              onToggle={async (e) => {
+                const opening = (e.currentTarget as HTMLDetailsElement).open;
                 setSfImportOpen(opening);
                 if (opening && sfProjects.length === 0) {
                   setSfProjectsLoading(true);
@@ -1693,16 +1710,20 @@ export default function HomePage() {
                   setSfProjectsLoading(false);
                 }
               }}
-              className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-left"
+              className="rounded-lg"
               style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}
             >
-              <div className="flex items-center gap-2">
-                <BookOpen className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
-                <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Import from Story Forge</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 transition-transform ${sfImportOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
-            </button>
-            {sfImportOpen && (
+              <summary
+                className="list-none w-full flex items-center justify-between px-4 py-3 cursor-pointer select-none"
+                data-testid="summary-sf-import"
+              >
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                  <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Import from Story Forge → New project</span>
+                </div>
+                <ChevronDown className={`w-4 h-4 transition-transform ${sfImportOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
+              </summary>
+              {(
               <div className="mt-2 rounded-lg p-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
                 {sfProjectsLoading ? (
                   <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto" style={{ color: "hsl(163,100%,42%)" }} /></div>
@@ -1825,14 +1846,16 @@ export default function HomePage() {
                   </div>
                 )}
               </div>
-            )}
+              )}
+            </details>
           </div>
 
-          {/* ── Import from Manuscript Forge ── */}
+          {/* ── Import from Manuscript Forge (creates a NEW project) ── */}
           <div className="mt-3">
-            <button
-              onClick={async () => {
-                const opening = !mfImportOpen;
+            <details
+              open={mfImportOpen}
+              onToggle={async (e) => {
+                const opening = (e.currentTarget as HTMLDetailsElement).open;
                 setMfImportOpen(opening);
                 if (opening && mfProjects.length === 0) {
                   setMfProjectsLoading(true);
@@ -1844,16 +1867,20 @@ export default function HomePage() {
                   setMfProjectsLoading(false);
                 }
               }}
-              className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-left"
+              className="rounded-lg"
               style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}
             >
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
-                <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Import from Manuscript Forge</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 transition-transform ${mfImportOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
-            </button>
-            {mfImportOpen && (
+              <summary
+                className="list-none w-full flex items-center justify-between px-4 py-3 cursor-pointer select-none"
+                data-testid="summary-mf-import"
+              >
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+                  <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Import from Manuscript Forge → New project</span>
+                </div>
+                <ChevronDown className={`w-4 h-4 transition-transform ${mfImportOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
+              </summary>
+              {(
               <div className="mt-2 rounded-lg p-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
                 {mfProjectsLoading ? (
                   <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto" style={{ color: "hsl(163,100%,42%)" }} /></div>
@@ -1976,28 +2003,38 @@ export default function HomePage() {
                   </div>
                 )}
               </div>
-            )}
+              )}
+            </details>
           </div>
 
-          {/* ── Location Forge Pipeline (Story Forge context · Candidate review · Export) ── */}
-          <div className="mt-8">
-            <button
-              onClick={() => setLfPipelineOpen(!lfPipelineOpen)}
-              className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-left"
-              style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}
-            >
-              <div className="flex items-center gap-2">
-                <Ruler className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
-                <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>Location Forge Pipeline — Story context · Candidates · Export</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 transition-transform ${lfPipelineOpen ? "rotate-180" : ""}`} style={{ color: "hsl(220,5%,40%)" }} />
-            </button>
-            {lfPipelineOpen && (
-              <div className="mt-2 rounded-lg p-4 space-y-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
-                {!currentProjectId && (
-                  <p className="text-xs" style={{ color: "hsl(220,5%,52%)" }}>Open or create a project first to use the pipeline.</p>
-                )}
-                {currentProjectId && (
+          {/* ── Location Forge Pipeline explainer (always visible, not an accordion) ── */}
+          <div className="mt-8 rounded-lg p-4" style={{ background: "hsl(225,18%,6%)", border: "1px solid hsl(225,10%,12%)" }}>
+            <div className="flex items-center gap-2 mb-2">
+              <Ruler className="w-4 h-4" style={{ color: "hsl(163,100%,42%)" }} />
+              <span className="text-sm font-semibold" style={{ color: "hsl(180,5%,88%)" }}>
+                Location Forge Pipeline — What it does
+              </span>
+            </div>
+            <p className="text-xs leading-relaxed mb-2" style={{ color: "hsl(220,5%,65%)" }}>
+              The pipeline lives <em>inside</em> each project. Open any project above (or create a new one) to:
+            </p>
+            <ul className="text-xs leading-relaxed mb-3 space-y-1 list-disc list-inside" style={{ color: "hsl(220,5%,65%)" }}>
+              <li><strong>Import Story Forge context</strong> — enrich this project with storyWorld, theme, tone, characters, and canon places from a Story Forge JSON, directly from the Build Location Profiles screen.</li>
+              <li><strong>Develop candidate locations</strong> — scan your source text and automatically seed candidates from Story Forge canon places.</li>
+              <li><strong>Rescan / redevelop</strong> — re-extract against new chapters, compare what changed, redevelop individual candidates.</li>
+              <li><strong>Export canon locations</strong> — download approved locations as JSON for downstream Forge apps.</li>
+            </ul>
+            {!currentProjectId && (
+              <p className="text-xs" style={{ color: "hsl(220,5%,52%)" }}>
+                👆 Open or create a project above to access the pipeline tools.
+              </p>
+            )}
+            {currentProjectId && (
+              <div className="space-y-4" data-testid="pipeline-tools">
+                <div className="text-xs font-mono" style={{ color: "hsl(163,100%,42%)" }}>
+                  Pipeline tools for: {currentProjectName}
+                </div>
+                {(
                   <>
                     {/* Story Forge Manual Import */}
                     <div>
@@ -2776,6 +2813,223 @@ export default function HomePage() {
                 then you can develop complete 10-section profiles with visual studies for any or all of them.
               </p>
             </div>
+
+            {/* ── Import from Story Forge (in-project, always visible) ── */}
+            {currentProjectId && (
+              <Card data-testid="card-story-forge-import">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-primary" />
+                    Import from Story Forge
+                    <Badge variant="secondary" className="ml-2 text-[10px] font-normal">Optional</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Pull a manuscript from a Story Forge project as your source text, or paste a Story Forge
+                    JSON context (storyWorld / theme / tone / characters / canon places) to enrich this project
+                    — candidate locations, character associations, and canon places will seed the pipeline.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant={inProjSfMode === "chapters" ? "default" : "secondary"}
+                      onClick={async () => {
+                        const next = inProjSfMode === "chapters" ? "closed" : "chapters";
+                        setInProjSfMode(next);
+                        if (next === "chapters" && inProjSfProjects.length === 0) {
+                          setInProjSfProjectsLoading(true);
+                          try {
+                            const res = await apiRequest("GET", "/api/story-forge/projects");
+                            const data = await res.json();
+                            setInProjSfProjects(data.projects || []);
+                          } catch { /* silent */ }
+                          setInProjSfProjectsLoading(false);
+                        }
+                      }}
+                      data-testid="button-inproj-sf-chapters"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 mr-1.5" />
+                      Import Chapters → Source Text
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={inProjSfMode === "json" ? "default" : "secondary"}
+                      onClick={() => setInProjSfMode(inProjSfMode === "json" ? "closed" : "json")}
+                      data-testid="button-inproj-sf-json"
+                    >
+                      <FileText className="w-3.5 h-3.5 mr-1.5" />
+                      Paste Story Forge JSON Context
+                    </Button>
+                  </div>
+
+                  {inProjSfMode === "chapters" && (
+                    <div className="rounded-lg p-3 bg-muted/30 border border-border">
+                      {inProjSfProjectsLoading ? (
+                        <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary" /></div>
+                      ) : inProjSfProjects.length === 0 ? (
+                        <p className="text-xs text-center py-4 text-muted-foreground">
+                          No Story Forge projects found for your account. Sign in to Story Forge and create/save a project first.
+                        </p>
+                      ) : !inProjSfSelectedProject ? (
+                        <div>
+                          <p className="text-xs mb-2 text-muted-foreground">Select a Story Forge project:</p>
+                          <div className="grid gap-2">
+                            {inProjSfProjects.map((p) => (
+                              <button
+                                key={p.id}
+                                onClick={async () => {
+                                  setInProjSfSelectedProject(p.name);
+                                  setInProjSfSelectedChapters(new Set());
+                                  setInProjSfChaptersLoading(true);
+                                  try {
+                                    const res = await apiRequest("GET", `/api/story-forge/chapters?project=${encodeURIComponent(p.name)}`);
+                                    const data = await res.json();
+                                    setInProjSfChapters(data.chapters || []);
+                                  } catch { /* silent */ }
+                                  setInProjSfChaptersLoading(false);
+                                }}
+                                className="flex items-center gap-2 px-3 py-2 rounded-md text-left text-sm bg-background border border-border hover:border-primary/50 transition-colors"
+                                data-testid={`button-inproj-sf-project-${p.id}`}
+                              >
+                                <BookOpen className="w-3.5 h-3.5 shrink-0 text-primary" />
+                                <span className="truncate">{p.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => { setInProjSfSelectedProject(null); setInProjSfChapters([]); setInProjSfSelectedChapters(new Set()); }}
+                                className="text-xs underline text-primary"
+                              >
+                                &larr; Back
+                              </button>
+                              <span className="text-xs font-mono text-muted-foreground">{inProjSfSelectedProject}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-muted-foreground">{inProjSfSelectedChapters.size} selected</span>
+                          </div>
+                          {inProjSfChaptersLoading ? (
+                            <div className="text-center py-6"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary" /></div>
+                          ) : inProjSfChapters.length === 0 ? (
+                            <p className="text-xs text-center py-4 text-muted-foreground">No chapters found in this project.</p>
+                          ) : (
+                            <>
+                              <div className="mb-2">
+                                <button
+                                  onClick={() => {
+                                    if (inProjSfSelectedChapters.size === inProjSfChapters.length) {
+                                      setInProjSfSelectedChapters(new Set());
+                                    } else {
+                                      setInProjSfSelectedChapters(new Set(inProjSfChapters.map((_, i) => i)));
+                                    }
+                                  }}
+                                  className="text-[10px] font-mono underline text-primary"
+                                >
+                                  {inProjSfSelectedChapters.size === inProjSfChapters.length ? "Deselect all" : "Select all"}
+                                </button>
+                              </div>
+                              <div className="space-y-1 max-h-60 overflow-y-auto">
+                                {inProjSfChapters.map((ch, i) => {
+                                  const wc = ch.wordCount ?? (ch.text || ch.content || "").split(/\s+/).filter(Boolean).length;
+                                  return (
+                                    <label key={i} className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-muted">
+                                      <input
+                                        type="checkbox"
+                                        checked={inProjSfSelectedChapters.has(i)}
+                                        onChange={() => {
+                                          const next = new Set(inProjSfSelectedChapters);
+                                          next.has(i) ? next.delete(i) : next.add(i);
+                                          setInProjSfSelectedChapters(next);
+                                        }}
+                                        className="accent-primary"
+                                      />
+                                      <span className="text-xs truncate flex-1">{ch.title || `Chapter ${i + 1}`}</span>
+                                      <span className="text-[10px] font-mono shrink-0 text-muted-foreground">{wc.toLocaleString()} words</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <Button
+                                size="sm"
+                                disabled={inProjSfSelectedChapters.size === 0 || inProjSfImporting}
+                                onClick={() => {
+                                  setInProjSfImporting(true);
+                                  try {
+                                    const selected = [...inProjSfSelectedChapters].sort((a, b) => a - b).map((i) => inProjSfChapters[i]);
+                                    const combined = selected.map((ch: any) => ch.text || ch.content || "").join("\n\n");
+                                    if (!combined.trim()) {
+                                      toast({ title: "No chapter text found", variant: "destructive" });
+                                    } else {
+                                      setSourceText(combined);
+                                      setSourceType("story");
+                                      toast({ title: `Loaded ${selected.length} chapter${selected.length !== 1 ? "s" : ""} into source text` });
+                                      setInProjSfMode("closed");
+                                      setInProjSfSelectedProject(null);
+                                      setInProjSfChapters([]);
+                                      setInProjSfSelectedChapters(new Set());
+                                    }
+                                  } catch (err: any) {
+                                    toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                                  }
+                                  setInProjSfImporting(false);
+                                }}
+                                className="mt-3 w-full"
+                                data-testid="button-inproj-sf-apply"
+                              >
+                                {inProjSfImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                                Load Into Source Text
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {inProjSfMode === "json" && (
+                    <div className="rounded-lg p-3 bg-muted/30 border border-border space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        Paste a Story Forge JSON context. Canon places and character-location associations will seed
+                        candidates in this project's pipeline.
+                      </p>
+                      <Textarea
+                        value={inProjSfJson}
+                        onChange={(e) => setInProjSfJson(e.target.value)}
+                        placeholder='{"storyWorld":"Harrow County","theme":"decay","tone":"melancholic","characters":[{"name":"Sarah","locationAssociations":["Old Mill"]}],"canonPlaces":[{"name":"Smith House","aliases":["Smith residence"]}]}'
+                        className="min-h-[120px] text-xs font-mono"
+                        data-testid="input-inproj-sf-json"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={inProjSfJsonImporting}
+                        onClick={async () => {
+                          setInProjSfJsonImporting(true);
+                          try {
+                            const payload = inProjSfJson.trim() ? JSON.parse(inProjSfJson) : {};
+                            const res = await apiRequest("POST", "/api/location-forge/story-forge/manual-import", { projectId: currentProjectId, payload });
+                            await res.json();
+                            toast({ title: "Story Forge context imported into this project" });
+                            setInProjSfJson("");
+                            setInProjSfMode("closed");
+                          } catch (err: any) {
+                            toast({ title: "Import failed", description: err.message, variant: "destructive" });
+                          }
+                          setInProjSfJsonImporting(false);
+                        }}
+                        data-testid="button-inproj-sf-json-apply"
+                      >
+                        {inProjSfJsonImporting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        Apply Story Forge Context
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Left: Text Input */}
