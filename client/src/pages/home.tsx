@@ -223,6 +223,7 @@ interface DevelopedItem {
   visualImages: Record<string, string>;
   visualImageHistory?: Record<string, string[]>;
   imageLocks?: Record<string, boolean>;
+  editedFields?: Record<string, boolean>;
 }
 
 type AuthScreen = "login" | "register" | "forgot" | "reset";
@@ -384,12 +385,22 @@ export default function HomePage() {
   const [enhancedFields, setEnhancedFields] = useState<Set<string>>(new Set());
   const [enhanceAllProgress, setEnhanceAllProgress] = useState<{ current: number; total: number } | null>(null);
 
+  // ── Manual Field Edit State (Location Profile sections) ──
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
   const currentProvider = PROVIDERS.find((p) => p.id === provider)!;
 
   // The current expanded item's profile and visual images
   const currentProfile = expandedItem ? developedItems[expandedItem]?.profile ?? null : null;
   const currentVisualImages = expandedItem ? developedItems[expandedItem]?.visualImages ?? {} : {};
   const selectedLocation = expandedItem || "";
+
+  // Discard any in-progress inline edit when the user switches locations
+  useEffect(() => {
+    setEditingField(null);
+    setEditDraft("");
+  }, [expandedItem]);
 
   // Visual study layer definitions — organized by production category
   const VISUAL_LAYERS = [
@@ -550,10 +561,26 @@ export default function HomePage() {
         setAnalysisProgress(stage.pct);
         setAnalysisStage(stage.label);
       }
-      setDevelopedItems((prev) => ({
-        ...prev,
-        [locationName]: { profile: DEMO_PROFILE, visualImages: {}, visualImageHistory: {} },
-      }));
+      setDevelopedItems((prev) => {
+        const existing = prev[locationName];
+        const edited = existing?.editedFields || {};
+        const mergedProfile: LocationProfile = { ...DEMO_PROFILE };
+        if (existing?.profile) {
+          for (const k of Object.keys(edited)) {
+            if (edited[k]) (mergedProfile as any)[k] = (existing.profile as any)[k];
+          }
+        }
+        return {
+          ...prev,
+          [locationName]: {
+            profile: mergedProfile,
+            visualImages: existing?.visualImages || {},
+            visualImageHistory: existing?.visualImageHistory || {},
+            imageLocks: existing?.imageLocks,
+            editedFields: edited,
+          },
+        };
+      });
       setIsAnalyzing(false);
       setDevelopingLocation(null);
       setStep("dashboard");
@@ -601,10 +628,26 @@ export default function HomePage() {
       setAnalysisProgress(100);
       setAnalysisStage("Profile complete.");
 
-      setDevelopedItems((prev) => ({
-        ...prev,
-        [locationName]: { profile: data.profile, visualImages: {}, visualImageHistory: {} },
-      }));
+      setDevelopedItems((prev) => {
+        const existing = prev[locationName];
+        const edited = existing?.editedFields || {};
+        const mergedProfile: LocationProfile = { ...data.profile };
+        if (existing?.profile) {
+          for (const k of Object.keys(edited)) {
+            if (edited[k]) (mergedProfile as any)[k] = (existing.profile as any)[k];
+          }
+        }
+        return {
+          ...prev,
+          [locationName]: {
+            profile: mergedProfile,
+            visualImages: existing?.visualImages || {},
+            visualImageHistory: existing?.visualImageHistory || {},
+            imageLocks: existing?.imageLocks,
+            editedFields: edited,
+          },
+        };
+      });
       setStep("dashboard");
       return true;
     } catch (err: any) {
@@ -1103,6 +1146,35 @@ export default function HomePage() {
     }
     setEnhanceAllProgress(null);
     toast({ title: "Enhancement complete", description: `Enhanced ${emptyFields.length} fields with AI-generated content.` });
+  };
+
+  // ── Manual Field Edit Handlers ──
+  const startEditField = (fieldKey: string) => {
+    if (!currentProfile) return;
+    const raw = (currentProfile as any)[fieldKey];
+    setEditDraft(typeof raw === "string" ? raw : raw == null ? "" : String(raw));
+    setEditingField(fieldKey);
+  };
+
+  const cancelEditField = () => {
+    setEditingField(null);
+    setEditDraft("");
+  };
+
+  const saveEditField = () => {
+    if (!editingField || !expandedItem) return;
+    const fieldKey = editingField;
+    const draft = editDraft;
+    setDevelopedItems((prev) => {
+      const item = prev[expandedItem];
+      if (!item) return prev;
+      const updatedProfile = { ...item.profile, [fieldKey]: draft } as LocationProfile;
+      const updatedEdited = { ...(item.editedFields || {}), [fieldKey]: true };
+      return { ...prev, [expandedItem]: { ...item, profile: updatedProfile, editedFields: updatedEdited } };
+    });
+    setEditingField(null);
+    setEditDraft("");
+    toast({ title: "Saved", description: "Your changes were saved to this location." });
   };
 
   // Reset
@@ -4374,35 +4446,115 @@ export default function HomePage() {
                         </div>
                         <div className="space-y-3">
                           {section.fields.map((field) => {
-                            const value = (currentProfile as any)[field.key] || "—";
+                            const rawValue = (currentProfile as any)[field.key];
+                            const value = rawValue || "—";
                             const empty = isFieldEmpty(value);
                             const isEnhancing = enhancingFields.has(field.key);
                             const wasEnhanced = enhancedFields.has(field.key);
+                            const wasEdited = !!(expandedItem && developedItems[expandedItem]?.editedFields?.[field.key]);
+                            const isEditing = editingField === field.key;
+                            const otherEditing = editingField !== null && !isEditing;
                             return (
                               <div key={field.key}>
-                                <div className="flex items-center justify-between mb-0.5">
-                                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                                    {field.label}
-                                  </p>
-                                  {(empty || wasEnhanced) && !isEnhancing && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-5 w-5 p-0 text-primary/60 hover:text-primary hover:bg-primary/10"
-                                      onClick={() => handleEnhanceField(field.key, field.label)}
-                                      disabled={enhancingFields.size > 0}
-                                      title={empty ? "Enhance with AI" : "Re-enhance with AI"}
-                                    >
-                                      <Wand2 className="w-3 h-3" />
-                                    </Button>
-                                  )}
-                                  {isEnhancing && (
-                                    <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                                  )}
+                                <div className="flex items-center justify-between gap-2 mb-0.5 flex-wrap">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                                      {field.label}
+                                    </p>
+                                    {wasEdited && !isEditing && (
+                                      <Badge
+                                        variant="secondary"
+                                        className="text-[9px] uppercase tracking-wider px-1.5 py-0 h-4 bg-blue-500/15 text-blue-400 border-blue-500/20"
+                                        title="This field was manually edited"
+                                        data-testid={`badge-edited-${field.key}`}
+                                      >
+                                        Edited
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    {!isEditing && (empty || wasEnhanced) && !isEnhancing && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-5 w-5 p-0 text-primary/60 hover:text-primary hover:bg-primary/10"
+                                        onClick={() => handleEnhanceField(field.key, field.label)}
+                                        disabled={enhancingFields.size > 0 || !!editingField}
+                                        title={empty ? "Enhance with AI" : "Re-enhance with AI"}
+                                      >
+                                        <Wand2 className="w-3 h-3" />
+                                      </Button>
+                                    )}
+                                    {isEnhancing && (
+                                      <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                                    )}
+                                    {!isEditing && !isEnhancing && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-5 w-5 p-0 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={() => startEditField(field.key)}
+                                        disabled={otherEditing || enhancingFields.size > 0}
+                                        title="Edit this field"
+                                        data-testid={`button-edit-${field.key}`}
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </Button>
+                                    )}
+                                    {isEditing && (
+                                      <>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs gap-1 text-green-500 hover:text-green-400 hover:bg-green-500/10"
+                                          onClick={saveEditField}
+                                          title="Save changes"
+                                          data-testid={`button-save-${field.key}`}
+                                        >
+                                          <Check className="w-3 h-3" />
+                                          Save
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                                          onClick={cancelEditField}
+                                          title="Discard changes"
+                                          data-testid={`button-cancel-${field.key}`}
+                                        >
+                                          <XIcon className="w-3 h-3" />
+                                          Cancel
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
-                                <p className={`text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full ${wasEnhanced ? "bg-green-500/10 rounded px-1.5 py-0.5" : ""}`}>
-                                  {value}
-                                </p>
+                                {isEditing ? (
+                                  <Textarea
+                                    value={editDraft}
+                                    onChange={(e) => setEditDraft(e.target.value)}
+                                    className="min-h-[90px] text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full w-full resize-y"
+                                    placeholder={`Enter ${field.label.toLowerCase()}...`}
+                                    data-testid={`textarea-edit-${field.key}`}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        cancelEditField();
+                                      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                                        e.preventDefault();
+                                        saveEditField();
+                                      }
+                                    }}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <p
+                                    className={`text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full ${wasEnhanced ? "bg-green-500/10 rounded px-1.5 py-0.5" : ""} ${wasEdited ? "border-l-2 border-blue-500/40 pl-2" : ""}`}
+                                    data-testid={`field-value-${field.key}`}
+                                  >
+                                    {value}
+                                  </p>
+                                )}
                               </div>
                             );
                           })}
