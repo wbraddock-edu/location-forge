@@ -70,6 +70,8 @@ import {
   Maximize2,
   Palette,
   X as XIcon,
+  StopCircle,
+  Timer,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
 import { ART_STYLES } from "@shared/schema";
@@ -354,6 +356,14 @@ export default function HomePage() {
   const [batchCategory, setBatchCategory] = useState<string>("camera");
   const [batchProgress, setBatchProgress] = useState(0);
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  // Throttle / queue state. Conservative default matches DALL-E Tier 1 (5 img/min → 12s).
+  // Gemini image preview is also rate-limited; 12s keeps well under per-minute caps.
+  const [batchDelaySec, setBatchDelaySec] = useState(12);
+  const [batchCurrentLabel, setBatchCurrentLabel] = useState<string>("");
+  const [batchStatusByKey, setBatchStatusByKey] = useState<
+    Record<string, "queued" | "generating" | "waiting" | "retrying" | "done" | "skipped" | "failed">
+  >({});
+  const batchCancelRef = useRef(false);
   const [scenePromptInput, setScenePromptInput] = useState("");
   const [galleryLightbox, setGalleryLightbox] = useState<{ locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: string } | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -1048,6 +1058,175 @@ export default function HomePage() {
       await handleGenerateVisual(layer.key, prompt, anchorImage);
       if (i < tabLayers.length - 1) {
         await delay(12000);
+      }
+    }
+  };
+
+  // Throttled, single-concurrency batch generator.
+  // - Sequential (max concurrency 1)
+  // - Configurable inter-request delay, default 12s
+  // - 429/503 → wait 60s and retry (max 2 retries)
+  // - Skips locked images; persists each image as it completes so partial progress survives
+  // - Writes directly to developedItems[locName] instead of relying on expandedItem closure
+  const runBatch = async (
+    targets: string[],
+    catLayers: typeof VISUAL_LAYERS,
+    category: string
+  ) => {
+    const delayMs = Math.max(0, Math.round(batchDelaySec * 1000));
+    const BACKOFF_MS = 60_000;
+    const MAX_RETRIES = 2;
+    const statusKey = (loc: string, k: string) => `${loc}||${k}`;
+    const setStatus = (
+      loc: string,
+      k: string,
+      s: "queued" | "generating" | "waiting" | "retrying" | "done" | "skipped" | "failed"
+    ) => setBatchStatusByKey((prev) => ({ ...prev, [statusKey(loc, k)]: s }));
+
+    const sleepCancellable = async (ms: number) => {
+      const step = 250;
+      const start = Date.now();
+      while (Date.now() - start < ms) {
+        if (batchCancelRef.current) return;
+        await new Promise((r) => setTimeout(r, Math.min(step, ms - (Date.now() - start))));
+      }
+    };
+
+    const generateOne = async (
+      locName: string,
+      layer: typeof VISUAL_LAYERS[number],
+      prompt: string,
+      anchorImage: string | undefined
+    ): Promise<string | undefined> => {
+      const imgProvider = provider === "anthropic" ? "openai" : provider;
+      const refs: string[] = [];
+      refs.push(...userReferenceImages);
+      if (anchorImage && layer.key !== "establishing") refs.push(anchorImage);
+
+      let attempt = 0;
+      while (true) {
+        if (batchCancelRef.current) return undefined;
+        setStatus(locName, layer.key, attempt === 0 ? "generating" : "retrying");
+        setBatchCurrentLabel(`${locName} — ${layer.title}`);
+        try {
+          const res = await apiRequest("POST", "/api/generate-image", {
+            prompt,
+            style: currentStylePrompt,
+            referenceImages: refs.length > 0 ? refs : undefined,
+            provider: imgProvider,
+            apiKey,
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          const b64: string | undefined = data.image;
+          if (!b64) throw new Error("No image returned");
+
+          // Persist image immediately so partial progress survives
+          setDevelopedItems((prev) => {
+            const item = prev[locName];
+            if (!item) return prev;
+            const oldImage = item.visualImages?.[layer.key];
+            const existingHistory = item.visualImageHistory?.[layer.key] || [];
+            const updatedHistory = oldImage
+              ? [oldImage, ...existingHistory].slice(0, 10)
+              : existingHistory;
+            return {
+              ...prev,
+              [locName]: {
+                ...item,
+                visualImages: { ...item.visualImages, [layer.key]: b64 },
+                visualImageHistory: {
+                  ...(item.visualImageHistory || {}),
+                  [layer.key]: updatedHistory,
+                },
+              },
+            };
+          });
+          setStatus(locName, layer.key, "done");
+          return b64;
+        } catch (err: any) {
+          const msg = String(err?.message || err || "");
+          const isRate =
+            msg.includes("429") ||
+            msg.toLowerCase().includes("rate limit") ||
+            msg.includes("503") ||
+            msg.toLowerCase().includes("overload") ||
+            msg.toLowerCase().includes("busy");
+          if (isRate && attempt < MAX_RETRIES) {
+            setStatus(locName, layer.key, "waiting");
+            setBatchCurrentLabel(
+              `Rate limited — waiting ${Math.round(BACKOFF_MS / 1000)}s before retry ${attempt + 1}/${MAX_RETRIES}`
+            );
+            await sleepCancellable(BACKOFF_MS);
+            if (batchCancelRef.current) return undefined;
+            attempt++;
+            continue;
+          }
+          setStatus(locName, layer.key, "failed");
+          console.error(`Batch image failed for ${locName}/${layer.key}:`, msg);
+          return undefined;
+        }
+      }
+    };
+
+    // Pre-seed status: queued / skipped
+    const initial: Record<string, any> = {};
+    let queuedCount = 0;
+    for (const loc of targets) {
+      const item = developedItems[loc];
+      if (!item) continue;
+      for (const layer of catLayers) {
+        if (item.imageLocks?.[layer.key]) {
+          initial[statusKey(loc, layer.key)] = "skipped";
+        } else {
+          initial[statusKey(loc, layer.key)] = "queued";
+          queuedCount++;
+        }
+      }
+    }
+    setBatchStatusByKey(initial);
+    setBatchProgress(0);
+
+    let done = 0;
+    const bump = () => {
+      done++;
+      setBatchProgress(queuedCount > 0 ? (done / queuedCount) * 100 : 100);
+    };
+
+    for (const locName of targets) {
+      if (batchCancelRef.current) break;
+      const item = developedItems[locName];
+      if (!item) continue;
+
+      // Ensure an anchor (establishing) image exists for non-camera categories
+      let anchorImage: string | undefined = item.visualImages?.["establishing"];
+      if (!anchorImage && category !== "camera") {
+        const est = VISUAL_LAYERS.find((l) => l.key === "establishing");
+        if (est && !item.imageLocks?.["establishing"]) {
+          const p = buildLayerPrompt(est, item.profile);
+          if (p) {
+            const produced = await generateOne(locName, est, p, undefined);
+            if (produced) anchorImage = produced;
+            if (batchCancelRef.current) break;
+            await sleepCancellable(delayMs);
+          }
+        }
+      }
+
+      for (const layer of catLayers) {
+        if (batchCancelRef.current) break;
+        if (item.imageLocks?.[layer.key]) continue; // already marked skipped
+        const p = buildLayerPrompt(layer, item.profile);
+        if (!p) {
+          setStatus(locName, layer.key, "skipped");
+          bump();
+          continue;
+        }
+        await generateOne(locName, layer, p, anchorImage);
+        bump();
+        if (batchCancelRef.current) break;
+        setBatchCurrentLabel(`Waiting ${Math.round(delayMs / 1000)}s before next image…`);
+        await sleepCancellable(delayMs);
       }
     }
   };
@@ -4253,65 +4432,116 @@ export default function HomePage() {
                         </Select>
                       </div>
 
-                      {isBatchGenerating && (
-                        <div className="space-y-1">
-                          <Progress value={batchProgress} className="h-1.5" />
-                          <p className="text-[10px] text-muted-foreground font-mono">{Math.round(batchProgress)}% complete</p>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                          <Timer className="w-3 h-3" /> Delay Between Images (sec)
+                        </Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={120}
+                          step={1}
+                          value={batchDelaySec}
+                          disabled={isBatchGenerating}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            if (!Number.isNaN(v)) setBatchDelaySec(Math.max(0, Math.min(120, v)));
+                          }}
+                          className="h-8 text-xs bg-muted/30 max-w-[120px]"
+                          data-testid="batch-delay-input"
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                          Default 12s keeps under common provider rate limits (DALL-E Tier 1 ≈ 5 img/min, Gemini image preview is similarly throttled). Lower values risk 429s.
+                        </p>
+                      </div>
+
+                      {(isBatchGenerating || Object.keys(batchStatusByKey).length > 0) && (
+                        <div className="space-y-2">
+                          <div className="space-y-1">
+                            <Progress value={batchProgress} className="h-1.5" />
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[10px] text-muted-foreground font-mono truncate">
+                                {batchCurrentLabel || `${Math.round(batchProgress)}% complete`}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground font-mono shrink-0">
+                                {Math.round(batchProgress)}%
+                              </p>
+                            </div>
+                          </div>
+                          <div className="max-h-48 overflow-auto rounded-md border border-border bg-muted/20 p-2 space-y-0.5">
+                            {Object.entries(batchStatusByKey).map(([k, s]) => {
+                              const [loc, layerKey] = k.split("||");
+                              const layer = VISUAL_LAYERS.find((l) => l.key === layerKey);
+                              const colorClass =
+                                s === "done" ? "text-green-500" :
+                                s === "failed" ? "text-red-500" :
+                                s === "skipped" ? "text-muted-foreground" :
+                                s === "waiting" || s === "retrying" ? "text-amber-500" :
+                                s === "generating" ? "text-primary" :
+                                "text-muted-foreground";
+                              const label =
+                                s === "done" ? "done" :
+                                s === "failed" ? "failed" :
+                                s === "skipped" ? "skipped (locked or empty prompt)" :
+                                s === "waiting" ? "waiting (rate limit)" :
+                                s === "retrying" ? "retrying" :
+                                s === "generating" ? "generating…" :
+                                "queued";
+                              return (
+                                <div key={k} className="flex items-center justify-between text-[10px] font-mono">
+                                  <span className="truncate">{loc} — {layer?.title || layerKey}</span>
+                                  <span className={`shrink-0 ${colorClass}`}>{label}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
 
-                      <Button
-                        className="h-8 text-xs w-full max-w-sm"
-                        disabled={!canRun}
-                        onClick={async () => {
-                          const targets = [...batchSelectedLocations];
-                          const catLayers = VISUAL_LAYERS.filter((l) => l.category === batchCategory && l.key !== "custom");
-                          if (targets.length === 0 || catLayers.length === 0) return;
-                          setIsBatchGenerating(true);
-                          setBatchProgress(0);
-                          const totalSteps = targets.length * catLayers.length;
-                          let done = 0;
-                          try {
-                            for (const locName of targets) {
-                              const item = developedItems[locName];
-                              if (!item) { done += catLayers.length; continue; }
-                              setExpandedItem(locName);
-                              // ensure establishing anchor exists if category needs it
-                              let anchorImage: string | undefined = item.visualImages?.["establishing"];
-                              if (!anchorImage && batchCategory !== "camera") {
-                                const est = VISUAL_LAYERS.find((l) => l.key === "establishing");
-                                if (est && !item.imageLocks?.["establishing"]) {
-                                  const prompt = buildLayerPrompt(est, item.profile);
-                                  const produced = await handleGenerateVisual("establishing", prompt);
-                                  if (produced) anchorImage = produced;
-                                  await new Promise((r) => setTimeout(r, 8000));
-                                }
+                      <div className="flex gap-2 max-w-sm">
+                        <Button
+                          className="h-8 text-xs flex-1"
+                          disabled={!canRun}
+                          onClick={async () => {
+                            const targets = [...batchSelectedLocations];
+                            const catLayers = VISUAL_LAYERS.filter((l) => l.category === batchCategory && l.key !== "custom");
+                            if (targets.length === 0 || catLayers.length === 0) return;
+                            batchCancelRef.current = false;
+                            setIsBatchGenerating(true);
+                            setBatchProgress(0);
+                            setBatchStatusByKey({});
+                            setBatchCurrentLabel("Starting…");
+                            try {
+                              await runBatch(targets, catLayers, batchCategory);
+                              if (batchCancelRef.current) {
+                                toast({ title: "Batch canceled", description: "Partial progress has been saved." });
+                              } else {
+                                toast({ title: "Batch complete", description: `Processed ${targets.length} location${targets.length !== 1 ? "s" : ""}.` });
                               }
-                              for (const layer of catLayers) {
-                                // Skip locked
-                                if (item.imageLocks?.[layer.key]) { done++; setBatchProgress((done / totalSteps) * 100); continue; }
-                                const prompt = buildLayerPrompt(layer, item.profile);
-                                if (!prompt) { done++; continue; }
-                                await handleGenerateVisual(layer.key, prompt, anchorImage);
-                                done++;
-                                setBatchProgress((done / totalSteps) * 100);
-                                // brief delay to respect provider rate-limits
-                                await new Promise((r) => setTimeout(r, 8000));
-                              }
+                            } catch (err: any) {
+                              toast({ title: "Batch error", description: err?.message || "Batch generation failed", variant: "destructive" });
+                            } finally {
+                              setIsBatchGenerating(false);
+                              setBatchCurrentLabel("");
+                              batchCancelRef.current = false;
                             }
-                            toast({ title: "Batch complete", description: `Processed ${targets.length} location${targets.length !== 1 ? "s" : ""}.` });
-                          } catch (err: any) {
-                            toast({ title: "Batch error", description: err?.message || "Batch generation failed", variant: "destructive" });
-                          } finally {
-                            setIsBatchGenerating(false);
-                            setBatchProgress(100);
-                          }
-                        }}
-                        data-testid="batch-generate-btn"
-                      >
-                        <Wand2 className="w-3.5 h-3.5 mr-1.5" />
-                        Generate {PANEL_CATEGORIES.find(c => c.id === batchCategory)?.label ?? ""} for {batchSelectedLocations.length} Location{batchSelectedLocations.length !== 1 ? "s" : ""}
-                      </Button>
+                          }}
+                          data-testid="batch-generate-btn"
+                        >
+                          <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+                          Generate {PANEL_CATEGORIES.find(c => c.id === batchCategory)?.label ?? ""} for {batchSelectedLocations.length} Location{batchSelectedLocations.length !== 1 ? "s" : ""}
+                        </Button>
+                        {isBatchGenerating && (
+                          <Button
+                            variant="destructive"
+                            className="h-8 text-xs"
+                            onClick={() => { batchCancelRef.current = true; }}
+                            data-testid="batch-cancel-btn"
+                          >
+                            <StopCircle className="w-3.5 h-3.5 mr-1.5" /> Cancel
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   );
                 })()}
