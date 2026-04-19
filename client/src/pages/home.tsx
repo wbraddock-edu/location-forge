@@ -68,6 +68,7 @@ import {
   Lock,
   Unlock,
   Maximize2,
+  Palette,
   X as XIcon,
 } from "lucide-react";
 import type { DetectedLocation, LocationProfile } from "@shared/schema";
@@ -222,6 +223,7 @@ interface DevelopedItem {
   visualImages: Record<string, string>;
   visualImageHistory?: Record<string, string[]>;
   imageLocks?: Record<string, boolean>;
+  editedFields?: Record<string, boolean>;
 }
 
 type AuthScreen = "login" | "register" | "forgot" | "reset";
@@ -346,6 +348,14 @@ export default function HomePage() {
   const [previewImage, setPreviewImage] = useState<{ layerKey: string; title: string; subtitle: string; category: string; image: string; description: string; locked: boolean } | null>(null);
   const [userReferenceImages, setUserReferenceImages] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState("");
+  // ── Art Studio state ──
+  const [artStudioTab, setArtStudioTab] = useState<"studio" | "gallery" | "batch" | "scene">("studio");
+  const [batchSelectedLocations, setBatchSelectedLocations] = useState<string[]>([]);
+  const [batchCategory, setBatchCategory] = useState<string>("camera");
+  const [batchProgress, setBatchProgress] = useState(0);
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [scenePromptInput, setScenePromptInput] = useState("");
+  const [galleryLightbox, setGalleryLightbox] = useState<{ locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: string } | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -375,12 +385,22 @@ export default function HomePage() {
   const [enhancedFields, setEnhancedFields] = useState<Set<string>>(new Set());
   const [enhanceAllProgress, setEnhanceAllProgress] = useState<{ current: number; total: number } | null>(null);
 
+  // ── Manual Field Edit State (Location Profile sections) ──
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
   const currentProvider = PROVIDERS.find((p) => p.id === provider)!;
 
   // The current expanded item's profile and visual images
   const currentProfile = expandedItem ? developedItems[expandedItem]?.profile ?? null : null;
   const currentVisualImages = expandedItem ? developedItems[expandedItem]?.visualImages ?? {} : {};
   const selectedLocation = expandedItem || "";
+
+  // Discard any in-progress inline edit when the user switches locations
+  useEffect(() => {
+    setEditingField(null);
+    setEditDraft("");
+  }, [expandedItem]);
 
   // Visual study layer definitions — organized by production category
   const VISUAL_LAYERS = [
@@ -541,10 +561,26 @@ export default function HomePage() {
         setAnalysisProgress(stage.pct);
         setAnalysisStage(stage.label);
       }
-      setDevelopedItems((prev) => ({
-        ...prev,
-        [locationName]: { profile: DEMO_PROFILE, visualImages: {}, visualImageHistory: {} },
-      }));
+      setDevelopedItems((prev) => {
+        const existing = prev[locationName];
+        const edited = existing?.editedFields || {};
+        const mergedProfile: LocationProfile = { ...DEMO_PROFILE };
+        if (existing?.profile) {
+          for (const k of Object.keys(edited)) {
+            if (edited[k]) (mergedProfile as any)[k] = (existing.profile as any)[k];
+          }
+        }
+        return {
+          ...prev,
+          [locationName]: {
+            profile: mergedProfile,
+            visualImages: existing?.visualImages || {},
+            visualImageHistory: existing?.visualImageHistory || {},
+            imageLocks: existing?.imageLocks,
+            editedFields: edited,
+          },
+        };
+      });
       setIsAnalyzing(false);
       setDevelopingLocation(null);
       setStep("dashboard");
@@ -592,10 +628,26 @@ export default function HomePage() {
       setAnalysisProgress(100);
       setAnalysisStage("Profile complete.");
 
-      setDevelopedItems((prev) => ({
-        ...prev,
-        [locationName]: { profile: data.profile, visualImages: {}, visualImageHistory: {} },
-      }));
+      setDevelopedItems((prev) => {
+        const existing = prev[locationName];
+        const edited = existing?.editedFields || {};
+        const mergedProfile: LocationProfile = { ...data.profile };
+        if (existing?.profile) {
+          for (const k of Object.keys(edited)) {
+            if (edited[k]) (mergedProfile as any)[k] = (existing.profile as any)[k];
+          }
+        }
+        return {
+          ...prev,
+          [locationName]: {
+            profile: mergedProfile,
+            visualImages: existing?.visualImages || {},
+            visualImageHistory: existing?.visualImageHistory || {},
+            imageLocks: existing?.imageLocks,
+            editedFields: edited,
+          },
+        };
+      });
       setStep("dashboard");
       return true;
     } catch (err: any) {
@@ -1094,6 +1146,35 @@ export default function HomePage() {
     }
     setEnhanceAllProgress(null);
     toast({ title: "Enhancement complete", description: `Enhanced ${emptyFields.length} fields with AI-generated content.` });
+  };
+
+  // ── Manual Field Edit Handlers ──
+  const startEditField = (fieldKey: string) => {
+    if (!currentProfile) return;
+    const raw = (currentProfile as any)[fieldKey];
+    setEditDraft(typeof raw === "string" ? raw : raw == null ? "" : String(raw));
+    setEditingField(fieldKey);
+  };
+
+  const cancelEditField = () => {
+    setEditingField(null);
+    setEditDraft("");
+  };
+
+  const saveEditField = () => {
+    if (!editingField || !expandedItem) return;
+    const fieldKey = editingField;
+    const draft = editDraft;
+    setDevelopedItems((prev) => {
+      const item = prev[expandedItem];
+      if (!item) return prev;
+      const updatedProfile = { ...item.profile, [fieldKey]: draft } as LocationProfile;
+      const updatedEdited = { ...(item.editedFields || {}), [fieldKey]: true };
+      return { ...prev, [expandedItem]: { ...item, profile: updatedProfile, editedFields: updatedEdited } };
+    });
+    setEditingField(null);
+    setEditDraft("");
+    toast({ title: "Saved", description: "Your changes were saved to this location." });
   };
 
   // Reset
@@ -3596,13 +3677,13 @@ export default function HomePage() {
               </CardContent>
             </Card>
 
-            {/* Visual Location Study */}
-            <Card>
+            {/* Location Art Studio */}
+            <Card data-testid="location-art-studio">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <Image className="w-4 h-4 text-primary" />
-                    Visual Location Study
+                    <Palette className="w-4 h-4 text-primary" />
+                    Location Art Studio
                   </CardTitle>
                   <div className="flex items-center gap-2">
                     {Object.keys(currentVisualImages).length > 0 && (
@@ -3616,16 +3697,18 @@ export default function HomePage() {
                         Download All
                       </Button>
                     )}
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleGenerateAll}
-                      disabled={!!generatingLayer}
-                      data-testid="button-generate-all"
-                    >
-                      <Wand2 className="w-3.5 h-3.5 mr-1.5" />
-                      Generate Tab ({PANEL_CATEGORIES.find(c => c.id === visualTab)?.label ?? ""})
-                    </Button>
+                    {artStudioTab === "studio" && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleGenerateAll}
+                        disabled={!!generatingLayer}
+                        data-testid="button-generate-all"
+                      >
+                        <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+                        Generate Tab ({PANEL_CATEGORIES.find(c => c.id === visualTab)?.label ?? ""})
+                      </Button>
+                    )}
                   </div>
                 </div>
                 {/* Style Selector */}
@@ -3700,11 +3783,31 @@ export default function HomePage() {
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground pt-1">
-                  Establishing Shot generates first as the visual anchor — all other layers reference it for consistent architecture, materials, and style.
-                  
+                  Visual workspace — Studio panels, gallery, batch generation, and custom scenes. Establishing Shot generates first as the visual anchor.
                 </p>
               </CardHeader>
               <CardContent className="p-0">
+                {/* Art Studio top-level tab bar */}
+                <div className="border-b border-border px-3 pt-3">
+                  <Tabs value={artStudioTab} onValueChange={(v) => setArtStudioTab(v as typeof artStudioTab)}>
+                    <TabsList className="h-8 bg-muted/30 p-0.5 rounded-lg">
+                      <TabsTrigger value="studio" className="text-[10px] h-7 rounded-md px-3 data-[state=active]:bg-card data-[state=active]:shadow-sm" data-testid="artstudio-tab-studio">
+                        <Palette className="w-3 h-3 mr-1" /> Studio
+                      </TabsTrigger>
+                      <TabsTrigger value="gallery" className="text-[10px] h-7 rounded-md px-3 data-[state=active]:bg-card data-[state=active]:shadow-sm" data-testid="artstudio-tab-gallery">
+                        <Image className="w-3 h-3 mr-1" /> Gallery
+                      </TabsTrigger>
+                      <TabsTrigger value="batch" className="text-[10px] h-7 rounded-md px-3 data-[state=active]:bg-card data-[state=active]:shadow-sm" data-testid="artstudio-tab-batch">
+                        <Wand2 className="w-3 h-3 mr-1" /> Batch Generate
+                      </TabsTrigger>
+                      <TabsTrigger value="scene" className="text-[10px] h-7 rounded-md px-3 data-[state=active]:bg-card data-[state=active]:shadow-sm" data-testid="artstudio-tab-scene">
+                        <Clapperboard className="w-3 h-3 mr-1" /> Custom Scene
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+
+                {artStudioTab === "studio" && (<>
                 {/* Category tab bar */}
                 <div className="border-b border-border overflow-x-auto">
                   <div className="flex gap-0 min-w-max">
@@ -4001,6 +4104,274 @@ export default function HomePage() {
                     })}
                   </div>
                 </div>
+                </>)}
+
+                {/* ── Gallery Tab ── */}
+                {artStudioTab === "gallery" && (() => {
+                  const allImages: { locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: string; locked: boolean }[] = [];
+                  Object.entries(developedItems).forEach(([locName, item]) => {
+                    Object.entries(item.visualImages || {}).forEach(([key, img]) => {
+                      if (!img) return;
+                      const layer = VISUAL_LAYERS.find((l) => l.key === key);
+                      allImages.push({
+                        locationName: locName,
+                        layerKey: key,
+                        layerTitle: layer?.title || key,
+                        subtitle: layer?.subtitle || "",
+                        image: img,
+                        locked: !!item.imageLocks?.[key],
+                      });
+                    });
+                  });
+                  const devCount = Object.keys(developedItems).length;
+                  return (
+                    <div className="p-4">
+                      {allImages.length === 0 ? (
+                        <div className="text-center py-12">
+                          <Image className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                          <p className="text-xs text-muted-foreground">
+                            No images generated yet. Use the Studio tab to generate visual layers for this location.
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                              {allImages.length} image{allImages.length !== 1 ? "s" : ""} across {devCount} location{devCount !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                            {allImages.map((item, i) => (
+                              <div key={`${item.locationName}-${item.layerKey}-${i}`} className={`rounded-lg overflow-hidden border border-border bg-card group relative ${item.locked ? "ring-1 ring-amber-400/60" : ""}`}>
+                                <button
+                                  type="button"
+                                  className="block w-full p-0 m-0 cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                  onClick={() => setGalleryLightbox(item)}
+                                  aria-label={`Open ${item.locationName} ${item.layerTitle} in lightbox`}
+                                  data-testid={`gallery-thumb-${i}`}
+                                >
+                                  <img
+                                    src={`data:image/png;base64,${item.image}`}
+                                    alt={`${item.locationName} - ${item.layerTitle}`}
+                                    className="w-full aspect-video object-cover"
+                                    loading="lazy"
+                                  />
+                                </button>
+                                {item.locked && (
+                                  <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[9px] font-semibold uppercase tracking-wider pointer-events-none">
+                                    <Lock className="w-3 h-3" /> Locked
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const link = document.createElement("a");
+                                    link.href = `data:image/png;base64,${item.image}`;
+                                    link.download = `${item.locationName}_${item.layerTitle.replace(/\s+/g, "_")}.png`;
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                  }}
+                                  className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                                  aria-label={`Download ${item.locationName} ${item.layerTitle}`}
+                                  data-testid={`gallery-download-${i}`}
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-5 pointer-events-none">
+                                  <p className="text-[10px] font-semibold text-white">{item.locationName}</p>
+                                  <p className="text-[8px] text-white/70">{item.layerTitle}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ── Batch Generate Tab ── */}
+                {artStudioTab === "batch" && (() => {
+                  const developedNames = Object.keys(developedItems);
+                  const canRun = batchSelectedLocations.length > 0 && !isBatchGenerating && !generatingLayer;
+                  return (
+                    <div className="p-4 space-y-4">
+                      <div>
+                        <h3 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Batch Generate</h3>
+                        <p className="text-[10px] text-muted-foreground">
+                          Select locations and a category to generate visual layers in bulk. Locked images are skipped automatically.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Select Locations</Label>
+                        {developedNames.length === 0 ? (
+                          <p className="text-[10px] text-muted-foreground">Develop at least one location to enable batch generation.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {developedNames.map((name) => {
+                              const isSelected = batchSelectedLocations.includes(name);
+                              return (
+                                <button
+                                  key={name}
+                                  onClick={() => {
+                                    setBatchSelectedLocations((prev) =>
+                                      isSelected ? prev.filter((n) => n !== name) : [...prev, name]
+                                    );
+                                  }}
+                                  className={`px-2.5 py-1 text-[10px] rounded-md border transition-colors ${
+                                    isSelected
+                                      ? "bg-primary/15 text-primary border-primary/30"
+                                      : "bg-muted/30 text-muted-foreground border-border hover:border-primary/30"
+                                  }`}
+                                  data-testid={`batch-loc-${name}`}
+                                >
+                                  {isSelected && <CheckCircle2 className="w-3 h-3 inline mr-1" />}
+                                  {name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Category</Label>
+                        <Select value={batchCategory} onValueChange={setBatchCategory}>
+                          <SelectTrigger className="h-8 text-xs bg-muted/30 max-w-sm" data-testid="batch-select-category">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PANEL_CATEGORIES.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>
+                                <span className="text-xs">{c.label}</span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {isBatchGenerating && (
+                        <div className="space-y-1">
+                          <Progress value={batchProgress} className="h-1.5" />
+                          <p className="text-[10px] text-muted-foreground font-mono">{Math.round(batchProgress)}% complete</p>
+                        </div>
+                      )}
+
+                      <Button
+                        className="h-8 text-xs w-full max-w-sm"
+                        disabled={!canRun}
+                        onClick={async () => {
+                          const targets = [...batchSelectedLocations];
+                          const catLayers = VISUAL_LAYERS.filter((l) => l.category === batchCategory && l.key !== "custom");
+                          if (targets.length === 0 || catLayers.length === 0) return;
+                          setIsBatchGenerating(true);
+                          setBatchProgress(0);
+                          const totalSteps = targets.length * catLayers.length;
+                          let done = 0;
+                          try {
+                            for (const locName of targets) {
+                              const item = developedItems[locName];
+                              if (!item) { done += catLayers.length; continue; }
+                              setExpandedItem(locName);
+                              // ensure establishing anchor exists if category needs it
+                              let anchorImage: string | undefined = item.visualImages?.["establishing"];
+                              if (!anchorImage && batchCategory !== "camera") {
+                                const est = VISUAL_LAYERS.find((l) => l.key === "establishing");
+                                if (est && !item.imageLocks?.["establishing"]) {
+                                  const prompt = buildLayerPrompt(est, item.profile);
+                                  const produced = await handleGenerateVisual("establishing", prompt);
+                                  if (produced) anchorImage = produced;
+                                  await new Promise((r) => setTimeout(r, 8000));
+                                }
+                              }
+                              for (const layer of catLayers) {
+                                // Skip locked
+                                if (item.imageLocks?.[layer.key]) { done++; setBatchProgress((done / totalSteps) * 100); continue; }
+                                const prompt = buildLayerPrompt(layer, item.profile);
+                                if (!prompt) { done++; continue; }
+                                await handleGenerateVisual(layer.key, prompt, anchorImage);
+                                done++;
+                                setBatchProgress((done / totalSteps) * 100);
+                                // brief delay to respect provider rate-limits
+                                await new Promise((r) => setTimeout(r, 8000));
+                              }
+                            }
+                            toast({ title: "Batch complete", description: `Processed ${targets.length} location${targets.length !== 1 ? "s" : ""}.` });
+                          } catch (err: any) {
+                            toast({ title: "Batch error", description: err?.message || "Batch generation failed", variant: "destructive" });
+                          } finally {
+                            setIsBatchGenerating(false);
+                            setBatchProgress(100);
+                          }
+                        }}
+                        data-testid="batch-generate-btn"
+                      >
+                        <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+                        Generate {PANEL_CATEGORIES.find(c => c.id === batchCategory)?.label ?? ""} for {batchSelectedLocations.length} Location{batchSelectedLocations.length !== 1 ? "s" : ""}
+                      </Button>
+                    </div>
+                  );
+                })()}
+
+                {/* ── Custom Scene Tab ── */}
+                {artStudioTab === "scene" && (
+                  <div className="p-4 space-y-4">
+                    <div>
+                      <h3 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Custom Scene Generator</h3>
+                      <p className="text-[10px] text-muted-foreground">
+                        Generate a one-off image for the current location — describe any angle, time, weather, or event. Stored as the "Director Shot" panel.
+                      </p>
+                    </div>
+
+                    {!expandedItem || !currentProfile ? (
+                      <p className="text-[11px] text-muted-foreground">Open a location to generate a custom scene.</p>
+                    ) : isLayerLocked("custom") ? (
+                      <div className="p-3 rounded-md bg-amber-500/10 border border-amber-400/30">
+                        <p className="text-[11px] text-amber-400 flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5" /> The Director Shot panel is locked. Unlock it from the Studio tab to regenerate.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</Label>
+                          <p className="text-xs font-semibold">{expandedItem}</p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Scene Description</Label>
+                          <Textarea
+                            placeholder="Describe the scene — any angle, time of day, weather, event... e.g. 'aerial view during a thunderstorm at midnight, lightning illuminating the mountain'"
+                            value={scenePromptInput}
+                            onChange={(e) => setScenePromptInput(e.target.value)}
+                            className="min-h-[90px] resize-y text-xs bg-muted/30 border-border placeholder:text-muted-foreground/50"
+                            data-testid="scene-prompt-input"
+                          />
+                        </div>
+                        <Button
+                          className="h-8 text-xs w-full max-w-sm"
+                          disabled={!scenePromptInput.trim() || !!generatingLayer}
+                          onClick={async () => {
+                            if (!scenePromptInput.trim() || !currentProfile) return;
+                            const anchor = currentVisualImages["establishing"];
+                            const fullPrompt = `CRITICAL: Generate exactly ONE single image. ONE location. ONE viewpoint. This is NOT a collage, NOT a grid, NOT multiple panels, NOT side-by-side. Just ONE standalone image filling the entire frame. ${currentStylePrompt}. Same location (${expandedItem}): ${scenePromptInput.trim()}`;
+                            await handleGenerateVisual("custom", fullPrompt, anchor);
+                            toast({ title: "Scene generated", description: `Custom scene saved to the Director Shot panel.` });
+                          }}
+                          data-testid="scene-generate-btn"
+                        >
+                          {generatingLayer === "custom" ? (
+                            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</>
+                          ) : (
+                            <><Wand2 className="w-3.5 h-3.5 mr-1.5" /> Generate Scene</>
+                          )}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -4075,35 +4446,115 @@ export default function HomePage() {
                         </div>
                         <div className="space-y-3">
                           {section.fields.map((field) => {
-                            const value = (currentProfile as any)[field.key] || "—";
+                            const rawValue = (currentProfile as any)[field.key];
+                            const value = rawValue || "—";
                             const empty = isFieldEmpty(value);
                             const isEnhancing = enhancingFields.has(field.key);
                             const wasEnhanced = enhancedFields.has(field.key);
+                            const wasEdited = !!(expandedItem && developedItems[expandedItem]?.editedFields?.[field.key]);
+                            const isEditing = editingField === field.key;
+                            const otherEditing = editingField !== null && !isEditing;
                             return (
                               <div key={field.key}>
-                                <div className="flex items-center justify-between mb-0.5">
-                                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                                    {field.label}
-                                  </p>
-                                  {(empty || wasEnhanced) && !isEnhancing && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-5 w-5 p-0 text-primary/60 hover:text-primary hover:bg-primary/10"
-                                      onClick={() => handleEnhanceField(field.key, field.label)}
-                                      disabled={enhancingFields.size > 0}
-                                      title={empty ? "Enhance with AI" : "Re-enhance with AI"}
-                                    >
-                                      <Wand2 className="w-3 h-3" />
-                                    </Button>
-                                  )}
-                                  {isEnhancing && (
-                                    <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                                  )}
+                                <div className="flex items-center justify-between gap-2 mb-0.5 flex-wrap">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                                      {field.label}
+                                    </p>
+                                    {wasEdited && !isEditing && (
+                                      <Badge
+                                        variant="secondary"
+                                        className="text-[9px] uppercase tracking-wider px-1.5 py-0 h-4 bg-blue-500/15 text-blue-400 border-blue-500/20"
+                                        title="This field was manually edited"
+                                        data-testid={`badge-edited-${field.key}`}
+                                      >
+                                        Edited
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    {!isEditing && (empty || wasEnhanced) && !isEnhancing && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-5 w-5 p-0 text-primary/60 hover:text-primary hover:bg-primary/10"
+                                        onClick={() => handleEnhanceField(field.key, field.label)}
+                                        disabled={enhancingFields.size > 0 || !!editingField}
+                                        title={empty ? "Enhance with AI" : "Re-enhance with AI"}
+                                      >
+                                        <Wand2 className="w-3 h-3" />
+                                      </Button>
+                                    )}
+                                    {isEnhancing && (
+                                      <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                                    )}
+                                    {!isEditing && !isEnhancing && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-5 w-5 p-0 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={() => startEditField(field.key)}
+                                        disabled={otherEditing || enhancingFields.size > 0}
+                                        title="Edit this field"
+                                        data-testid={`button-edit-${field.key}`}
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </Button>
+                                    )}
+                                    {isEditing && (
+                                      <>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs gap-1 text-green-500 hover:text-green-400 hover:bg-green-500/10"
+                                          onClick={saveEditField}
+                                          title="Save changes"
+                                          data-testid={`button-save-${field.key}`}
+                                        >
+                                          <Check className="w-3 h-3" />
+                                          Save
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                                          onClick={cancelEditField}
+                                          title="Discard changes"
+                                          data-testid={`button-cancel-${field.key}`}
+                                        >
+                                          <XIcon className="w-3 h-3" />
+                                          Cancel
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
-                                <p className={`text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full ${wasEnhanced ? "bg-green-500/10 rounded px-1.5 py-0.5" : ""}`}>
-                                  {value}
-                                </p>
+                                {isEditing ? (
+                                  <Textarea
+                                    value={editDraft}
+                                    onChange={(e) => setEditDraft(e.target.value)}
+                                    className="min-h-[90px] text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full w-full resize-y"
+                                    placeholder={`Enter ${field.label.toLowerCase()}...`}
+                                    data-testid={`textarea-edit-${field.key}`}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        cancelEditField();
+                                      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                                        e.preventDefault();
+                                        saveEditField();
+                                      }
+                                    }}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <p
+                                    className={`text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full ${wasEnhanced ? "bg-green-500/10 rounded px-1.5 py-0.5" : ""} ${wasEdited ? "border-l-2 border-blue-500/40 pl-2" : ""}`}
+                                    data-testid={`field-value-${field.key}`}
+                                  >
+                                    {value}
+                                  </p>
+                                )}
                               </div>
                             );
                           })}
@@ -4113,6 +4564,75 @@ export default function HomePage() {
                   ))}
                 </Tabs>
               </Card>
+            </div>
+          </div>
+        )}
+
+        {/* Gallery Lightbox */}
+        {galleryLightbox && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setGalleryLightbox(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview of ${galleryLightbox.locationName} ${galleryLightbox.layerTitle}`}
+            data-testid="gallery-lightbox"
+          >
+            <div
+              className="bg-card border border-border rounded-lg shadow-xl w-full max-w-[90vw] max-h-[90vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-3 border-b border-border flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold text-sm truncate">{galleryLightbox.locationName}</h3>
+                    <Badge variant="secondary" className="text-[9px] uppercase tracking-wider px-1.5 py-0 h-4">
+                      {galleryLightbox.layerTitle}
+                    </Badge>
+                  </div>
+                  {galleryLightbox.subtitle && (
+                    <p className="text-[11px] text-muted-foreground mt-1">{galleryLightbox.subtitle}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="w-8 h-8"
+                    onClick={() => {
+                      const link = document.createElement("a");
+                      link.href = `data:image/png;base64,${galleryLightbox.image}`;
+                      link.download = `${galleryLightbox.locationName}_${galleryLightbox.layerTitle.replace(/\s+/g, "_")}.png`;
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    title="Download image"
+                    aria-label="Download image"
+                    data-testid="button-gallery-download"
+                  >
+                    <Download className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="w-8 h-8"
+                    onClick={() => setGalleryLightbox(null)}
+                    title="Close preview"
+                    aria-label="Close preview"
+                    data-testid="button-gallery-close"
+                  >
+                    <XIcon className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0 bg-[hsl(225,18%,6%)] flex items-center justify-center p-2 overflow-hidden">
+                <img
+                  src={`data:image/png;base64,${galleryLightbox.image}`}
+                  alt={`${galleryLightbox.locationName} ${galleryLightbox.layerTitle}`}
+                  className="max-w-full max-h-[80vh] object-contain"
+                />
+              </div>
             </div>
           </div>
         )}
