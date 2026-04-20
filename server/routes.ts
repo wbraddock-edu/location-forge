@@ -28,6 +28,14 @@ import {
   type ExtractedCandidate,
 } from "./locationExtractor";
 import { registerStripeRoutes, canAccessFeatures, isAdmin, isTrialActive, hasActiveSubscription } from "./stripe";
+import {
+  safeAssetPath,
+  writeImageToDisk,
+  writeBackup,
+  type ImageAssetRef,
+} from "./assets";
+import fs from "fs";
+import path from "path";
 
 declare module "express" {
   interface Request {
@@ -888,7 +896,10 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     if (req.path.startsWith("/auth/") || req.path.startsWith("/auth") || req.path === "/stripe/webhook") {
       return next();
     }
-    const token = req.headers["x-session-id"] as string;
+    // Support auth via x-session-id header OR ?token= query param (for <img src>).
+    const headerToken = req.headers["x-session-id"] as string | undefined;
+    const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
+    const token = headerToken || queryToken;
     if (!token) return res.status(401).json({ error: "Authentication required" });
 
     const session = db.select().from(authSessions).where(eq(authSessions.token, token)).get();
@@ -1075,6 +1086,166 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       ).run(name.trim(), new Date().toISOString(), parseInt(req.params.id as string), req.userId!);
       return res.json({ ok: true });
     } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Project-scoped image asset serving ──
+  // Served only to owners of the project. Filenames are validated against a
+  // strict character set and normalized to prevent path traversal.
+  app.get("/api/project-assets/:projectId/:filename", (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.projectId as string, 10);
+      const filename = req.params.filename as string;
+      if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
+
+      const owned = sqlite.prepare(
+        `SELECT id FROM projects WHERE id = ? AND user_id = ?`
+      ).get(projectId, req.userId!);
+      if (!owned) return res.status(404).json({ error: "not found" });
+
+      const full = safeAssetPath(projectId, filename);
+      if (!full) return res.status(400).json({ error: "invalid filename" });
+      if (!fs.existsSync(full)) return res.status(404).json({ error: "not found" });
+
+      const ext = path.extname(filename).toLowerCase();
+      const mime =
+        ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
+        ext === ".webp" ? "image/webp" : "image/png";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      return fs.createReadStream(full).pipe(res);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Limited, reversible image compaction test ──
+  // POST /api/projects/:id/compact-images-test { limit?: number (default 3, max 5),
+  //                                              locationName?: string, category?: string,
+  //                                              dryRun?: boolean }
+  // Writes a JSON backup of the entire project state BEFORE replacing any base64 strings.
+  // Migrates up to `limit` images (never all). Verifies each file write before replacing.
+  app.post("/api/projects/:id/compact-images-test", (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.id as string, 10);
+      if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
+
+      const HARD_CAP = 5;
+      const requested = typeof req.body?.limit === "number" ? req.body.limit : 3;
+      const limit = Math.max(1, Math.min(HARD_CAP, Math.floor(requested)));
+      const locationFilter: string | undefined = typeof req.body?.locationName === "string" && req.body.locationName.trim()
+        ? req.body.locationName.trim()
+        : undefined;
+      const categoryFilter: string | undefined = typeof req.body?.category === "string" && req.body.category.trim()
+        ? req.body.category.trim()
+        : undefined;
+      const dryRun = req.body?.dryRun === true;
+
+      const row = sqlite.prepare(
+        `SELECT id, name, state_json, updated_at FROM projects WHERE id = ? AND user_id = ?`
+      ).get(projectId, req.userId!) as any;
+      if (!row) return res.status(404).json({ error: "Project not found" });
+
+      const state: any = row.state_json ? JSON.parse(row.state_json) : {};
+      const developedItems: Record<string, any> = state.developedItems || {};
+
+      // 1. Backup (full project row as JSON) BEFORE any change. Abort if this fails.
+      let backupPath: string;
+      try {
+        backupPath = writeBackup(projectId, {
+          backupVersion: 1,
+          savedAt: new Date().toISOString(),
+          projectId,
+          name: row.name,
+          state,
+          updatedAt: row.updated_at,
+        });
+      } catch (e: any) {
+        return res.status(500).json({ error: `Backup failed, aborting migration: ${e.message}` });
+      }
+
+      // 2. Collect candidate base64 images under visualImages.
+      interface Candidate {
+        locationName: string;
+        layerKey: string;
+        base64: string;
+      }
+      const candidates: Candidate[] = [];
+      for (const [locationName, item] of Object.entries(developedItems)) {
+        if (locationFilter && locationName !== locationFilter) continue;
+        const visualImages: Record<string, any> = (item as any)?.visualImages || {};
+        for (const [layerKey, val] of Object.entries(visualImages)) {
+          if (typeof val !== "string" || !val) continue; // already migrated ref, or empty
+          if (val.length < 1000) continue; // almost certainly not a real image
+          if (categoryFilter) {
+            // Category filter: match layerKey prefix or embedded category hint.
+            if (!layerKey.toLowerCase().includes(categoryFilter.toLowerCase())) continue;
+          }
+          candidates.push({ locationName, layerKey, base64: val });
+          if (candidates.length >= limit) break;
+        }
+        if (candidates.length >= limit) break;
+      }
+
+      const report: any = {
+        projectId,
+        limit,
+        dryRun,
+        backupPath,
+        candidates: candidates.length,
+        migrated: [] as any[],
+        failed: [] as any[],
+        skipped: [] as any[],
+      };
+
+      if (dryRun || candidates.length === 0) {
+        return res.json({ ok: true, ...report, note: dryRun ? "Dry run — no changes written." : "No candidates found." });
+      }
+
+      // 3. Two-phase: write each file, verify, then replace that single field.
+      // Work on a deep-enough copy: we only mutate visualImages maps.
+      for (const c of candidates) {
+        try {
+          const rawBase64 = c.base64.replace(/^data:image\/[^;]+;base64,/, "");
+          const written = writeImageToDisk(projectId, rawBase64, "image/png");
+          // Verify again
+          if (!fs.existsSync(written.absPath) || fs.statSync(written.absPath).size <= 0) {
+            report.failed.push({ location: c.locationName, layerKey: c.layerKey, reason: "post-write verification failed" });
+            continue;
+          }
+          const item = developedItems[c.locationName];
+          if (!item || !item.visualImages || typeof item.visualImages[c.layerKey] !== "string") {
+            report.skipped.push({ location: c.locationName, layerKey: c.layerKey, reason: "field changed during migration" });
+            continue;
+          }
+          const ref: ImageAssetRef = {
+            kind: "asset",
+            url: written.url,
+            path: written.absPath,
+            bytes: written.bytes,
+            mime: "image/png",
+            migratedAt: new Date().toISOString(),
+            title: c.layerKey,
+          };
+          item.visualImages[c.layerKey] = ref;
+          report.migrated.push({ location: c.locationName, layerKey: c.layerKey, url: written.url, bytes: written.bytes });
+        } catch (e: any) {
+          report.failed.push({ location: c.locationName, layerKey: c.layerKey, reason: e.message });
+        }
+      }
+
+      // 4. Persist updated state only if at least one migration succeeded.
+      if (report.migrated.length > 0) {
+        const newStateJson = JSON.stringify(state);
+        sqlite.prepare(
+          `UPDATE projects SET state_json = ?, updated_at = ? WHERE id = ? AND user_id = ?`
+        ).run(newStateJson, new Date().toISOString(), projectId, req.userId!);
+      }
+
+      return res.json({ ok: true, ...report });
+    } catch (err: any) {
+      console.error("compact-images-test error:", err);
       return res.status(500).json({ error: err.message });
     }
   });

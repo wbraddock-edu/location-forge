@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/components/theme-provider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { apiRequest, setSessionToken, getSessionToken } from "@/lib/queryClient";
+import { imageSrc, hasImage, downloadImage, toBase64Async, type ImageValue } from "@/lib/imageRef";
 import {
   Upload,
   FileText,
@@ -222,8 +223,9 @@ const IMPORTANCE_COLORS: Record<string, { bg: string; text: string }> = {
 
 interface DevelopedItem {
   profile: LocationProfile;
-  visualImages: Record<string, string>;
-  visualImageHistory?: Record<string, string[]>;
+  // Values may be base64 strings (legacy) or asset refs (after limited migration).
+  visualImages: Record<string, ImageValue>;
+  visualImageHistory?: Record<string, ImageValue[]>;
   imageLocks?: Record<string, boolean>;
   editedFields?: Record<string, boolean>;
 }
@@ -347,7 +349,7 @@ export default function HomePage() {
   const [generatingStyle, setGeneratingStyle] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
   const [showPromptDialog, setShowPromptDialog] = useState<{ layerKey: string; title: string; prompt: string } | null>(null);
-  const [previewImage, setPreviewImage] = useState<{ layerKey: string; title: string; subtitle: string; category: string; image: string; description: string; locked: boolean } | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ layerKey: string; title: string; subtitle: string; category: string; image: ImageValue; description: string; locked: boolean } | null>(null);
   const [userReferenceImages, setUserReferenceImages] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState("");
   // ── Art Studio state ──
@@ -365,7 +367,7 @@ export default function HomePage() {
   >({});
   const batchCancelRef = useRef(false);
   const [scenePromptInput, setScenePromptInput] = useState("");
-  const [galleryLightbox, setGalleryLightbox] = useState<{ locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: string } | null>(null);
+  const [galleryLightbox, setGalleryLightbox] = useState<{ locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: ImageValue } | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -706,9 +708,15 @@ export default function HomePage() {
     setIsExporting(true);
 
     try {
+      // Flatten images to base64 strings (asset refs require a fetch).
+      const flat: Record<string, string> = {};
+      for (const [k, v] of Object.entries(currentVisualImages)) {
+        const b64 = await toBase64Async(v);
+        if (b64) flat[k] = b64;
+      }
       const res = await apiRequest("POST", "/api/export-docx", {
         profile: currentProfile,
-        images: currentVisualImages,
+        images: flat,
       });
 
       const blob = await res.blob();
@@ -736,10 +744,13 @@ export default function HomePage() {
     setIsExportingAll(true);
 
     try {
-      const items = devEntries.map(([name, item]) => ({
-        name,
-        profile: item.profile,
-        images: item.visualImages,
+      const items = await Promise.all(devEntries.map(async ([name, item]) => {
+        const flat: Record<string, string> = {};
+        for (const [k, v] of Object.entries(item.visualImages)) {
+          const b64 = await toBase64Async(v);
+          if (b64) flat[k] = b64;
+        }
+        return { name, profile: item.profile, images: flat };
       }));
 
       const res = await apiRequest("POST", "/api/export-all-docx", { items });
@@ -827,15 +838,11 @@ export default function HomePage() {
   };
 
   // Download a single image
-  const handleDownloadImage = (layerKey: string, layerTitle: string) => {
-    const b64 = currentVisualImages[layerKey];
-    if (!b64) return;
-    const link = document.createElement("a");
-    link.href = `data:image/png;base64,${b64}`;
-    link.download = `${selectedLocation || "Location"}_${layerTitle.replace(/\s+/g, "_")}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownloadImage = async (layerKey: string, layerTitle: string) => {
+    const val = currentVisualImages[layerKey];
+    if (!hasImage(val)) return;
+    const name = `${selectedLocation || "Location"}_${layerTitle.replace(/\s+/g, "_")}.png`;
+    await downloadImage(val, name);
   };
 
   // Upload an external image into a panel (from Midjourney, etc.)
@@ -876,15 +883,16 @@ export default function HomePage() {
 
   // Download all images as ZIP
   const handleDownloadAllImages = async () => {
-    const entries = Object.entries(currentVisualImages);
+    const entries = Object.entries(currentVisualImages).filter(([, v]) => hasImage(v));
     if (entries.length === 0) return;
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
     const locName = selectedLocation || "Location";
-    for (const [key, b64] of entries) {
+    for (const [key, val] of entries) {
       const layer = VISUAL_LAYERS.find((l) => l.key === key);
       const fileName = `${locName}_${layer?.title || key}.png`.replace(/\s+/g, "_");
-      zip.file(fileName, b64, { base64: true });
+      const b64 = await toBase64Async(val);
+      if (b64) zip.file(fileName, b64, { base64: true });
     }
     const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
@@ -926,11 +934,15 @@ export default function HomePage() {
     setUserReferenceImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Build the reference images array for a generation call
-  const buildReferenceArray = (anchorImage?: string): string[] => {
+  // Build the reference images array for a generation call. Accepts legacy
+  // base64 strings or asset refs — refs are fetched and converted to base64.
+  const buildReferenceArray = async (anchorImage?: ImageValue): Promise<string[]> => {
     const refs: string[] = [];
     refs.push(...userReferenceImages);
-    if (anchorImage) refs.push(anchorImage);
+    if (anchorImage) {
+      const b64 = await toBase64Async(anchorImage);
+      if (b64) refs.push(b64);
+    }
     return refs;
   };
 
@@ -938,7 +950,7 @@ export default function HomePage() {
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   // Generate a single visual layer — now updates developedItems
-  const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: string) => {
+  const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: ImageValue) => {
     if (!prompt || !expandedItem) {
       if (!prompt) toast({ title: "No prompt", description: "This layer has no visual prompt.", variant: "destructive" });
       return;
@@ -951,7 +963,7 @@ export default function HomePage() {
     try {
       const imgProvider = provider === "anthropic" ? "openai" : provider;
       const anchor = anchorOverride || (layerKey !== "establishing" ? currentVisualImages["establishing"] : undefined);
-      const refs = buildReferenceArray(anchor);
+      const refs = await buildReferenceArray(anchor);
       
       const imgRes = await apiRequest("POST", "/api/generate-image", {
         prompt,
@@ -1037,7 +1049,7 @@ export default function HomePage() {
     const tabLayers = VISUAL_LAYERS.filter(l => l.category === visualTab && l.key !== "custom");
     
     // Step 1: Use or generate the establishing shot (anchor) first if not present
-    let anchorImage = currentVisualImages["establishing"];
+    let anchorImage: ImageValue = currentVisualImages["establishing"];
     if (!anchorImage) {
       const establishingLayer = VISUAL_LAYERS.find(l => l.key === "establishing");
       if (establishingLayer) {
@@ -1046,7 +1058,7 @@ export default function HomePage() {
         await delay(12000);
       }
     }
-    
+
     // Step 2: Generate layers in current tab
     for (let i = 0; i < tabLayers.length; i++) {
       const layer = tabLayers[i];
@@ -1096,12 +1108,15 @@ export default function HomePage() {
       locName: string,
       layer: typeof VISUAL_LAYERS[number],
       prompt: string,
-      anchorImage: string | undefined
+      anchorImage: ImageValue
     ): Promise<string | undefined> => {
       const imgProvider = provider === "anthropic" ? "openai" : provider;
       const refs: string[] = [];
       refs.push(...userReferenceImages);
-      if (anchorImage && layer.key !== "establishing") refs.push(anchorImage);
+      if (anchorImage && layer.key !== "establishing") {
+        const anchorB64 = await toBase64Async(anchorImage);
+        if (anchorB64) refs.push(anchorB64);
+      }
 
       let attempt = 0;
       while (true) {
@@ -1199,7 +1214,7 @@ export default function HomePage() {
       if (!item) continue;
 
       // Ensure an anchor (establishing) image exists for non-camera categories
-      let anchorImage: string | undefined = item.visualImages?.["establishing"];
+      let anchorImage: ImageValue = item.visualImages?.["establishing"];
       if (!anchorImage && category !== "camera") {
         const est = VISUAL_LAYERS.find((l) => l.key === "establishing");
         if (est && !item.imageLocks?.["establishing"]) {
@@ -4057,7 +4072,7 @@ export default function HomePage() {
                                 data-testid={`button-preview-${layer.key}`}
                               >
                                 <img
-                                  src={`data:image/png;base64,${img}`}
+                                  src={imageSrc(img)}
                                   alt={layer.title}
                                   className="w-full h-full object-cover"
                                 />
@@ -4287,7 +4302,7 @@ export default function HomePage() {
 
                 {/* ── Gallery Tab ── */}
                 {artStudioTab === "gallery" && (() => {
-                  const allImages: { locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: string; locked: boolean }[] = [];
+                  const allImages: { locationName: string; layerKey: string; layerTitle: string; subtitle: string; image: ImageValue; locked: boolean }[] = [];
                   Object.entries(developedItems).forEach(([locName, item]) => {
                     Object.entries(item.visualImages || {}).forEach(([key, img]) => {
                       if (!img) return;
@@ -4330,7 +4345,7 @@ export default function HomePage() {
                                   data-testid={`gallery-thumb-${i}`}
                                 >
                                   <img
-                                    src={`data:image/png;base64,${item.image}`}
+                                    src={imageSrc(item.image)}
                                     alt={`${item.locationName} - ${item.layerTitle}`}
                                     className="w-full aspect-video object-cover"
                                     loading="lazy"
@@ -4345,12 +4360,10 @@ export default function HomePage() {
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    const link = document.createElement("a");
-                                    link.href = `data:image/png;base64,${item.image}`;
-                                    link.download = `${item.locationName}_${item.layerTitle.replace(/\s+/g, "_")}.png`;
-                                    document.body.appendChild(link);
-                                    link.click();
-                                    document.body.removeChild(link);
+                                    void downloadImage(
+                                      item.image,
+                                      `${item.locationName}_${item.layerTitle.replace(/\s+/g, "_")}.png`
+                                    );
                                   }}
                                   className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity backdrop-blur-sm"
                                   aria-label={`Download ${item.locationName} ${item.layerTitle}`}
@@ -4830,12 +4843,10 @@ export default function HomePage() {
                     size="icon"
                     className="w-8 h-8"
                     onClick={() => {
-                      const link = document.createElement("a");
-                      link.href = `data:image/png;base64,${galleryLightbox.image}`;
-                      link.download = `${galleryLightbox.locationName}_${galleryLightbox.layerTitle.replace(/\s+/g, "_")}.png`;
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
+                      void downloadImage(
+                        galleryLightbox.image,
+                        `${galleryLightbox.locationName}_${galleryLightbox.layerTitle.replace(/\s+/g, "_")}.png`
+                      );
                     }}
                     title="Download image"
                     aria-label="Download image"
@@ -4858,7 +4869,7 @@ export default function HomePage() {
               </div>
               <div className="flex-1 min-h-0 bg-[hsl(225,18%,6%)] flex items-center justify-center p-2 overflow-hidden">
                 <img
-                  src={`data:image/png;base64,${galleryLightbox.image}`}
+                  src={imageSrc(galleryLightbox.image)}
                   alt={`${galleryLightbox.locationName} ${galleryLightbox.layerTitle}`}
                   className="max-w-full max-h-[80vh] object-contain"
                 />
@@ -4940,7 +4951,7 @@ export default function HomePage() {
                 </div>
                 <div className="flex-1 min-h-0 bg-[hsl(225,18%,6%)] flex items-center justify-center p-2 overflow-hidden">
                   <img
-                    src={`data:image/png;base64,${liveImage}`}
+                    src={imageSrc(liveImage)}
                     alt={previewImage.title}
                     className="max-w-full max-h-[80vh] object-contain"
                   />
