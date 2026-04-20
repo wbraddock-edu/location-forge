@@ -325,6 +325,13 @@ export default function HomePage() {
 
   // Auto-save timer ref
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Skip one auto-save pass while a project is being loaded, so the debounced
+  // save doesn't clobber freshly-hydrated state (including imageLocks) with the
+  // empty developedItems that existed before hydration.
+  const projectLoadingRef = useRef(false);
+  // Holds the latest save payload so saveProjectStateNow() can flush fresh
+  // state without closure staleness — used for lock/unlock and unload.
+  const latestStateRef = useRef<any>(null);
 
   // State
   const [step, setStep] = useState<Step>("upload");
@@ -811,24 +818,39 @@ export default function HomePage() {
 
   const toggleLayerLock = (layerKey: string) => {
     if (!expandedItem) return;
+    // Capture the NEW lock state up front so the toast message and the
+    // follow-up save both see the value we just set (setDevelopedItems is
+    // async, so isLayerLocked() would otherwise read the prior state).
+    const wasLocked = isLayerLocked(layerKey);
+    const nextLocked = !wasLocked;
     setDevelopedItems((prev) => {
       const item = prev[expandedItem];
       if (!item) return prev;
       const currentLocks = item.imageLocks || {};
-      const nextLocked = !currentLocks[layerKey];
       const nextLocks = { ...currentLocks, [layerKey]: nextLocked };
       if (!nextLocked) delete nextLocks[layerKey];
-      return {
+      const nextItems = {
         ...prev,
         [expandedItem]: { ...item, imageLocks: nextLocks },
       };
+      // Refresh the ref synchronously so the immediate save below writes the
+      // new lock — not the pre-toggle snapshot. The effect that normally
+      // maintains this ref runs post-commit, which would race with our PUT.
+      if (latestStateRef.current) {
+        latestStateRef.current = { ...latestStateRef.current, developedItems: nextItems };
+      }
+      return nextItems;
     });
     toast({
-      title: isLayerLocked(layerKey) ? "Image unlocked" : "Image locked",
-      description: isLayerLocked(layerKey)
-        ? "This image can now be regenerated or replaced."
-        : "This image is protected from regeneration and batch actions.",
+      title: nextLocked ? "Image locked" : "Image unlocked",
+      description: nextLocked
+        ? "This image is protected from regeneration and batch actions."
+        : "This image can now be regenerated or replaced.",
     });
+    // Lock state is tiny and high-value. Persist immediately rather than
+    // waiting on the 3s debounced auto-save, so the lock survives if the
+    // user closes the tab or navigates away right after toggling.
+    saveProjectStateNow();
   };
 
   // Show prompt for Midjourney
@@ -1440,7 +1462,7 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     if (currentProjectId) {
-      try { await saveProjectState(); } catch { /* silent */ }
+      try { await saveProjectStateNow(); } catch { /* silent */ }
     }
     try { await apiRequest("POST", "/api/auth/logout"); } catch {}
     setSessionToken(null);
@@ -1527,6 +1549,10 @@ export default function HomePage() {
   };
 
   const handleOpenProject = async (id: number, name: string) => {
+    // Block the debounced auto-save from firing while we hydrate — otherwise
+    // the stale pre-load developedItems can overwrite freshly loaded state
+    // (including imageLocks) on the server.
+    projectLoadingRef.current = true;
     setCurrentProjectId(id);
     setCurrentProjectName(name);
     try {
@@ -1548,6 +1574,11 @@ export default function HomePage() {
       setAppScreen("app");
     } catch (err: any) {
       toast({ title: "Error", description: "Failed to load project", variant: "destructive" });
+    } finally {
+      // Release the guard after the hydrated state has a chance to commit and
+      // the first auto-save effect has re-run. A short delay is enough — the
+      // subsequent debounce is 3s.
+      setTimeout(() => { projectLoadingRef.current = false; }, 500);
     }
   };
 
@@ -1574,9 +1605,12 @@ export default function HomePage() {
     } catch {}
   };
 
-  const handleBackToProjects = () => {
-    // Save current state before leaving
-    if (currentProjectId) saveProjectState();
+  const handleBackToProjects = async () => {
+    // Flush any pending auto-save and wait for it before we tear down state,
+    // so recent changes (including image locks) land on the server.
+    if (currentProjectId) {
+      try { await saveProjectStateNow(); } catch { /* silent */ }
+    }
     setAppScreen("projects");
     handleReset();
     setCurrentProjectId(null);
@@ -1584,9 +1618,21 @@ export default function HomePage() {
 
   // ── Auto-Save ──
 
+  // Keep a ref to the latest save payload so saveProjectStateNow() can flush
+  // without going through React re-render timing. This matters for small,
+  // high-value state changes like image lock/unlock that need to persist even
+  // if the user closes the tab or navigates away within the 3s debounce.
+  useEffect(() => {
+    latestStateRef.current = {
+      sourceText, sourceType, provider, apiKey, artStyle,
+      customStylePrompt, customStyleInput,
+      detectedLocations, developedItems, step,
+    };
+  }, [sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step]);
+
   const saveProjectState = useCallback(async () => {
     if (!currentProjectId) return;
-    const state: any = {
+    const state: any = latestStateRef.current ?? {
       sourceText, sourceType, provider, apiKey, artStyle,
       customStylePrompt, customStyleInput,
       detectedLocations, developedItems, step,
@@ -1596,9 +1642,26 @@ export default function HomePage() {
     } catch {}
   }, [currentProjectId, sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step]);
 
+  // Immediate (non-debounced) save. Flushes any pending debounced save and
+  // issues a PUT right away using the freshest state snapshot. Use this after
+  // user actions that must survive a tab close or navigation — e.g. locking
+  // an image — where waiting on the 3s debounce risks losing the change.
+  const saveProjectStateNow = useCallback(async () => {
+    if (!currentProjectId) return;
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
+    await saveProjectState();
+  }, [currentProjectId, saveProjectState]);
+
   // Auto-save on state changes (debounced)
   useEffect(() => {
     if (appScreen !== "app" || !currentProjectId) return;
+    // Skip the tick that fires while a project is mid-load: developedItems
+    // still reflects the pre-load snapshot and could overwrite newly-hydrated
+    // fields (including imageLocks) on the server.
+    if (projectLoadingRef.current) return;
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
       saveProjectState();
@@ -1607,6 +1670,51 @@ export default function HomePage() {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
   }, [sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step, appScreen, currentProjectId, saveProjectState]);
+
+  // Flush any pending save when the tab is about to unload. Uses sendBeacon
+  // so the request survives the tab close even if it races the unload.
+  useEffect(() => {
+    if (appScreen !== "app" || !currentProjectId) return;
+    const flush = () => {
+      const state = latestStateRef.current;
+      if (!state) return;
+      try {
+        const token = getSessionToken();
+        const body = JSON.stringify({ state });
+        const baseUrl = `/api/projects/${currentProjectId}`;
+        // The server auth middleware accepts the session token either as the
+        // x-session-id header or as ?token=. sendBeacon can't set custom
+        // headers, so we ride the URL query path for beacon and fall back to
+        // keepalive fetch (which can send headers) on failure.
+        const beaconUrl = token
+          ? `${baseUrl}?token=${encodeURIComponent(token)}`
+          : baseUrl;
+        const ok = typeof navigator.sendBeacon === "function"
+          ? navigator.sendBeacon(
+              beaconUrl,
+              new Blob([body], { type: "application/json" })
+            )
+          : false;
+        if (!ok) {
+          fetch(baseUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { "X-Session-Id": token } : {}),
+            },
+            body,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch {}
+    };
+    window.addEventListener("beforeunload", flush);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [appScreen, currentProjectId]);
 
   // Close image preview on Escape
   useEffect(() => {
@@ -1897,7 +2005,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-400">{authUser?.displayName}</span>
-              <Button variant="ghost" size="sm" onClick={async () => { if (currentProjectId) { try { await saveProjectState(); } catch { /* silent */ } } setAppScreen("account"); }} className="text-gray-400 hover:text-white">
+              <Button variant="ghost" size="sm" onClick={async () => { if (currentProjectId) { try { await saveProjectStateNow(); } catch { /* silent */ } } setAppScreen("account"); }} className="text-gray-400 hover:text-white">
                 <User className="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="sm" onClick={handleLogout} className="text-gray-400 hover:text-white">
