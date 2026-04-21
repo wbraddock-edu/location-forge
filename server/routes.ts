@@ -32,6 +32,7 @@ import {
   safeAssetPath,
   writeImageToDisk,
   writeBackup,
+  BACKUPS_ROOT,
   type ImageAssetRef,
 } from "./assets";
 import fs from "fs";
@@ -1282,52 +1283,232 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   const SAVE_WARN_BYTES = 75 * 1024 * 1024;
   const SAVE_BLOCK_BYTES = 95 * 1024 * 1024;
 
-  // ── Limited, reversible image compaction test ──
-  // POST /api/projects/:id/compact-images-test { limit?: number (default 3, max 5),
-  //                                              locationName?: string, category?: string,
-  //                                              dryRun?: boolean }
-  // Writes a JSON backup of the entire project state BEFORE replacing any base64 strings.
-  // Migrates up to `limit` images (never all). Verifies each file write before replacing.
-  app.post("/api/projects/:id/compact-images-test", (req: Request, res: Response) => {
+  // ── Limited, reversible image compaction ──
+  //
+  // The old synchronous `POST /api/projects/:id/compact-images-test` route
+  // attempted to parse the entire project state JSON, write a backup, scan for
+  // base64 images, decode and write each, and save — all inside the HTTP
+  // request. For projects with a large state (project 6 in production), this
+  // regularly exceeded Railway's request deadline and surfaced as a 502
+  // ("Application failed to respond"). The app itself was healthy; the single
+  // request was simply doing too much work.
+  //
+  // This block replaces that with three routes:
+  //
+  //   GET  /api/projects/:id/compact-images-preflight
+  //        Read-only size/count probe. No mutations, no decode of images,
+  //        bounded scan so it never times out.
+  //
+  //   POST /api/projects/:id/compact-images-test/start   { limit?: number }
+  //        Queues a background job and returns a jobId immediately. The actual
+  //        backup + decode + write + save happens off the request thread.
+  //
+  //   GET  /api/projects/:id/compact-images-test/status/:jobId
+  //        Polls progress/result for a previously-started job. Job is scoped
+  //        to the submitting user AND project id, so one user cannot read
+  //        another's job.
+  //
+  // The legacy `POST /api/projects/:id/compact-images-test` is preserved but
+  // now 202-redirects clients to the async `/start` route instead of doing
+  // work synchronously — so no caller can accidentally trigger the timeout-
+  // prone path.
+
+  const COMPACT_HARD_CAP = 5;
+  const COMPACT_DEFAULT_LIMIT = 1;
+  // Bounded preflight scan: we walk at most this many chars of state_json
+  // looking for data: URLs. On a project whose state is tens of megabytes
+  // this keeps the preflight well under any proxy timeout.
+  const PREFLIGHT_SCAN_BYTES = 8 * 1024 * 1024;
+  // Warnings thresholds for preflight. "Huge" means the full async job could
+  // be slow; caller should still start with limit=1.
+  const PREFLIGHT_WARN_BYTES = 25 * 1024 * 1024;
+  const PREFLIGHT_HUGE_BYTES = 60 * 1024 * 1024;
+
+  type CompactJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+  interface CompactJob {
+    jobId: string;
+    userId: number;
+    projectId: number;
+    limit: number;
+    status: CompactJobStatus;
+    currentStep: string;
+    backupPath?: string;
+    migrated: Array<{ location: string; layerKey: string; url: string; bytes: number }>;
+    failed: Array<{ location: string; layerKey: string; reason: string }>;
+    skipped: Array<{ location: string; layerKey: string; reason: string }>;
+    errors: string[];
+    candidatesFound: number;
+    startedAt: string;
+    completedAt?: string;
+  }
+
+  // In-process job table. Acceptable limitation: jobs live only on the Node
+  // instance that accepted /start; a restart or a different Railway replica
+  // loses the status. For a single-replica deploy (current state) this is
+  // fine. If Location Forge ever scales horizontally, replace with a shared
+  // store (DB row or Redis).
+  const compactJobs = new Map<string, CompactJob>();
+  // Keep only the most recent N jobs in memory.
+  const COMPACT_JOB_RETENTION = 32;
+
+  function newJobId(): string {
+    return crypto.randomBytes(12).toString("hex");
+  }
+
+  function trimOldJobs() {
+    if (compactJobs.size <= COMPACT_JOB_RETENTION) return;
+    const entries = Array.from(compactJobs.entries()).sort(
+      (a, b) => a[1].startedAt.localeCompare(b[1].startedAt)
+    );
+    while (entries.length > COMPACT_JOB_RETENTION) {
+      const [id] = entries.shift()!;
+      compactJobs.delete(id);
+    }
+  }
+
+  // Bounded, read-only preflight. Reports:
+  //   - approximate state_json size (from sqlite length())
+  //   - bounded count of data:image;base64 occurrences in state_json
+  //   - asset-ref occurrences (already-migrated images)
+  //   - whether the backups directory is writable
+  //   - recommended first limit (always 1)
+  //   - warnings when project is large
+  app.get("/api/projects/:id/compact-images-preflight", (req: Request, res: Response) => {
     try {
       const projectId = parseInt(req.params.id as string, 10);
       if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
 
-      const HARD_CAP = 5;
-      const requested = typeof req.body?.limit === "number" ? req.body.limit : 3;
-      const limit = Math.max(1, Math.min(HARD_CAP, Math.floor(requested)));
-      const locationFilter: string | undefined = typeof req.body?.locationName === "string" && req.body.locationName.trim()
-        ? req.body.locationName.trim()
-        : undefined;
-      const categoryFilter: string | undefined = typeof req.body?.category === "string" && req.body.category.trim()
-        ? req.body.category.trim()
-        : undefined;
-      const dryRun = req.body?.dryRun === true;
-
       const row = sqlite.prepare(
-        `SELECT id, name, state_json, updated_at FROM projects WHERE id = ? AND user_id = ?`
+        `SELECT id, name, length(state_json) AS state_bytes, updated_at FROM projects WHERE id = ? AND user_id = ?`
       ).get(projectId, req.userId!) as any;
       if (!row) return res.status(404).json({ error: "Project not found" });
 
+      const stateBytes: number = Number(row.state_bytes || 0);
+
+      // Bounded scan: read only the first PREFLIGHT_SCAN_BYTES of state_json
+      // via sqlite's substr(), then count markers. We deliberately do NOT
+      // parse the JSON — on a 60MB state, JSON.parse alone can take seconds
+      // and allocate hundreds of megabytes.
+      const scanned = sqlite.prepare(
+        `SELECT substr(state_json, 1, ?) AS slice FROM projects WHERE id = ? AND user_id = ?`
+      ).get(PREFLIGHT_SCAN_BYTES, projectId, req.userId!) as any;
+
+      const slice: string = typeof scanned?.slice === "string" ? scanned.slice : "";
+      // Count base64 image data URLs (likely pre-migration images)
+      const base64Matches = slice.match(/data:image\/[a-zA-Z0-9.+-]+;base64,/g);
+      const base64CountInScan = base64Matches ? base64Matches.length : 0;
+      // Count existing asset refs (already migrated)
+      const assetRefMatches = slice.match(/"kind"\s*:\s*"asset"/g);
+      const assetRefCountInScan = assetRefMatches ? assetRefMatches.length : 0;
+
+      const scanTruncated = stateBytes > PREFLIGHT_SCAN_BYTES;
+
+      // Check backup dir is writable.
+      let backupDirWritable = false;
+      let backupDirError: string | undefined;
+      try {
+        fs.accessSync(BACKUPS_ROOT, fs.constants.W_OK);
+        backupDirWritable = true;
+      } catch (e: any) {
+        backupDirError = e?.message;
+      }
+
+      const warnings: string[] = [];
+      if (stateBytes >= PREFLIGHT_HUGE_BYTES) {
+        warnings.push(
+          `Project state is very large (~${Math.round(stateBytes / 1024 / 1024)}MB). ` +
+          `Async job will still work but may take minutes. Start with limit=1 and verify each run.`
+        );
+      } else if (stateBytes >= PREFLIGHT_WARN_BYTES) {
+        warnings.push(
+          `Project state is large (~${Math.round(stateBytes / 1024 / 1024)}MB). ` +
+          `Prefer starting with limit=1.`
+        );
+      }
+      if (scanTruncated) {
+        warnings.push(
+          `Preflight scan was bounded to the first ${Math.round(PREFLIGHT_SCAN_BYTES / 1024 / 1024)}MB ` +
+          `of state; base64/asset counts are lower bounds, not exact totals.`
+        );
+      }
+      if (!backupDirWritable) {
+        warnings.push(
+          `Backup directory is NOT writable: ${backupDirError || "unknown reason"}. ` +
+          `A job started now would abort during the pre-mutation backup step.`
+        );
+      }
+
+      return res.json({
+        ok: true,
+        projectId,
+        name: row.name,
+        stateBytes,
+        stateBytesApproxMB: Math.round((stateBytes / 1024 / 1024) * 100) / 100,
+        scan: {
+          scannedBytes: Math.min(stateBytes, PREFLIGHT_SCAN_BYTES),
+          truncated: scanTruncated,
+          base64ImageCount: base64CountInScan,
+          assetRefCount: assetRefCountInScan,
+          exact: !scanTruncated,
+        },
+        backupDirWritable,
+        backupDirError,
+        recommendedFirstLimit: COMPACT_DEFAULT_LIMIT,
+        hardCap: COMPACT_HARD_CAP,
+        warnings,
+        updatedAt: row.updated_at,
+      });
+    } catch (err: any) {
+      console.error("compact-images-preflight error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Run a compact job synchronously-in-function but asynchronously-wrt-the
+  // HTTP request: /start returns immediately, the function below runs on the
+  // next tick via setImmediate.
+  function runCompactJob(job: CompactJob): void {
+    const userId = job.userId;
+    const projectId = job.projectId;
+    const limit = job.limit;
+    try {
+      job.status = "running";
+      job.currentStep = "loading project state";
+
+      const row = sqlite.prepare(
+        `SELECT id, name, state_json, updated_at FROM projects WHERE id = ? AND user_id = ?`
+      ).get(projectId, userId) as any;
+      if (!row) {
+        job.status = "failed";
+        job.errors.push("Project not found (it may have been deleted between start and run)");
+        job.completedAt = new Date().toISOString();
+        return;
+      }
+
+      job.currentStep = "parsing state";
       const state: any = row.state_json ? JSON.parse(row.state_json) : {};
       const developedItems: Record<string, any> = state.developedItems || {};
 
-      // 1. Backup (full project row as JSON) BEFORE any change. Abort if this fails.
-      let backupPath: string;
+      job.currentStep = "writing backup";
       try {
-        backupPath = writeBackup(projectId, {
+        job.backupPath = writeBackup(projectId, {
           backupVersion: 1,
           savedAt: new Date().toISOString(),
           projectId,
           name: row.name,
           state,
           updatedAt: row.updated_at,
+          asyncJobId: job.jobId,
         });
       } catch (e: any) {
-        return res.status(500).json({ error: `Backup failed, aborting migration: ${e.message}` });
+        job.status = "failed";
+        job.errors.push(`Backup failed, aborting migration: ${e?.message || e}`);
+        job.completedAt = new Date().toISOString();
+        return;
       }
 
-      // 2. Collect candidate base64 images under visualImages.
+      job.currentStep = "scanning for base64 image candidates";
       interface Candidate {
         locationName: string;
         layerKey: string;
@@ -1335,50 +1516,36 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       }
       const candidates: Candidate[] = [];
       for (const [locationName, item] of Object.entries(developedItems)) {
-        if (locationFilter && locationName !== locationFilter) continue;
         const visualImages: Record<string, any> = (item as any)?.visualImages || {};
         for (const [layerKey, val] of Object.entries(visualImages)) {
-          if (typeof val !== "string" || !val) continue; // already migrated ref, or empty
-          if (val.length < 1000) continue; // almost certainly not a real image
-          if (categoryFilter) {
-            // Category filter: match layerKey prefix or embedded category hint.
-            if (!layerKey.toLowerCase().includes(categoryFilter.toLowerCase())) continue;
-          }
+          if (typeof val !== "string" || !val) continue;
+          if (val.length < 1000) continue;
           candidates.push({ locationName, layerKey, base64: val });
           if (candidates.length >= limit) break;
         }
         if (candidates.length >= limit) break;
       }
+      job.candidatesFound = candidates.length;
 
-      const report: any = {
-        projectId,
-        limit,
-        dryRun,
-        backupPath,
-        candidates: candidates.length,
-        migrated: [] as any[],
-        failed: [] as any[],
-        skipped: [] as any[],
-      };
-
-      if (dryRun || candidates.length === 0) {
-        return res.json({ ok: true, ...report, note: dryRun ? "Dry run — no changes written." : "No candidates found." });
+      if (candidates.length === 0) {
+        job.status = "succeeded";
+        job.currentStep = "no candidates";
+        job.completedAt = new Date().toISOString();
+        return;
       }
 
-      // 3. Two-phase: write each file, verify, then replace that single field.
-      // Work on a deep-enough copy: we only mutate visualImages maps.
+      job.currentStep = "decoding and writing images";
       for (const c of candidates) {
         try {
           const rawBase64 = c.base64.replace(/^data:image\/[^;]+;base64,/, "");
           const written = writeImageToDisk(projectId, rawBase64, "image/png");
-          // Verify again
           if (!fs.existsSync(written.absPath) || fs.statSync(written.absPath).size <= 0) {
-            report.failed.push({ location: c.locationName, layerKey: c.layerKey, reason: "post-write verification failed" });
+            job.failed.push({ location: c.locationName, layerKey: c.layerKey, reason: "post-write verification failed" });
             continue;
           }
           const item = developedItems[c.locationName];
           if (!item || !item.visualImages || typeof item.visualImages[c.layerKey] !== "string") {
-            report.skipped.push({ location: c.locationName, layerKey: c.layerKey, reason: "field changed during migration" });
+            job.skipped.push({ location: c.locationName, layerKey: c.layerKey, reason: "field changed during migration" });
             continue;
           }
           const ref: ImageAssetRef = {
@@ -1391,21 +1558,178 @@ export async function registerRoutes(httpServer: Server, app: Express) {
             title: c.layerKey,
           };
           item.visualImages[c.layerKey] = ref;
-          report.migrated.push({ location: c.locationName, layerKey: c.layerKey, url: written.url, bytes: written.bytes });
+          job.migrated.push({ location: c.locationName, layerKey: c.layerKey, url: written.url, bytes: written.bytes });
         } catch (e: any) {
-          report.failed.push({ location: c.locationName, layerKey: c.layerKey, reason: e.message });
+          job.failed.push({ location: c.locationName, layerKey: c.layerKey, reason: e?.message || String(e) });
         }
       }
 
-      // 4. Persist updated state only if at least one migration succeeded.
-      if (report.migrated.length > 0) {
+      if (job.migrated.length > 0) {
+        job.currentStep = "saving updated state";
         const newStateJson = JSON.stringify(state);
         sqlite.prepare(
           `UPDATE projects SET state_json = ?, updated_at = ? WHERE id = ? AND user_id = ?`
-        ).run(newStateJson, new Date().toISOString(), projectId, req.userId!);
+        ).run(newStateJson, new Date().toISOString(), projectId, userId);
       }
 
-      return res.json({ ok: true, ...report });
+      job.status = "succeeded";
+      job.currentStep = "done";
+      job.completedAt = new Date().toISOString();
+    } catch (err: any) {
+      job.status = "failed";
+      job.errors.push(err?.message || String(err));
+      job.completedAt = new Date().toISOString();
+    }
+  }
+
+  // POST /api/projects/:id/compact-images-test/start { limit?: number }
+  app.post("/api/projects/:id/compact-images-test/start", (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.id as string, 10);
+      if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
+
+      // Ownership check — cheap, no state_json read.
+      const owned = sqlite.prepare(
+        `SELECT id FROM projects WHERE id = ? AND user_id = ?`
+      ).get(projectId, req.userId!);
+      if (!owned) return res.status(404).json({ error: "Project not found" });
+
+      const requested = typeof req.body?.limit === "number" ? req.body.limit : COMPACT_DEFAULT_LIMIT;
+      const limit = Math.max(1, Math.min(COMPACT_HARD_CAP, Math.floor(requested)));
+
+      const job: CompactJob = {
+        jobId: newJobId(),
+        userId: req.userId!,
+        projectId,
+        limit,
+        status: "queued",
+        currentStep: "queued",
+        migrated: [],
+        failed: [],
+        skipped: [],
+        errors: [],
+        candidatesFound: 0,
+        startedAt: new Date().toISOString(),
+      };
+      compactJobs.set(job.jobId, job);
+      trimOldJobs();
+
+      // Kick off on next tick so the HTTP response goes out first.
+      setImmediate(() => {
+        try {
+          runCompactJob(job);
+        } catch (e: any) {
+          job.status = "failed";
+          job.errors.push(e?.message || String(e));
+          job.completedAt = new Date().toISOString();
+        }
+      });
+
+      return res.status(202).json({
+        ok: true,
+        jobId: job.jobId,
+        status: job.status,
+        limit,
+        hardCap: COMPACT_HARD_CAP,
+        projectId,
+        statusUrl: `/api/projects/${projectId}/compact-images-test/status/${job.jobId}`,
+      });
+    } catch (err: any) {
+      console.error("compact-images-test/start error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/projects/:id/compact-images-test/status/:jobId
+  app.get("/api/projects/:id/compact-images-test/status/:jobId", (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.id as string, 10);
+      if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
+      const jobId = req.params.jobId as string;
+      if (!/^[a-f0-9]{24}$/.test(jobId)) return res.status(400).json({ error: "invalid jobId" });
+
+      const job = compactJobs.get(jobId);
+      // Require the job to match BOTH the requesting user and the project in
+      // the URL. This prevents cross-user or cross-project lookups even if a
+      // jobId is leaked or guessed.
+      if (!job || job.userId !== req.userId! || job.projectId !== projectId) {
+        return res.status(404).json({ error: "job not found" });
+      }
+
+      return res.json({
+        ok: true,
+        jobId: job.jobId,
+        projectId: job.projectId,
+        limit: job.limit,
+        status: job.status,
+        currentStep: job.currentStep,
+        backupPath: job.backupPath,
+        candidatesFound: job.candidatesFound,
+        migrated: job.migrated,
+        failed: job.failed,
+        skipped: job.skipped,
+        errors: job.errors,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+      });
+    } catch (err: any) {
+      console.error("compact-images-test/status error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Legacy synchronous endpoint — now returns 202 + jobId instead of doing the
+  // work inline. This keeps any old DevTools invocation from triggering the
+  // 502-prone code path while still surfacing a usable jobId.
+  app.post("/api/projects/:id/compact-images-test", (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.id as string, 10);
+      if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
+
+      const owned = sqlite.prepare(
+        `SELECT id FROM projects WHERE id = ? AND user_id = ?`
+      ).get(projectId, req.userId!);
+      if (!owned) return res.status(404).json({ error: "Project not found" });
+
+      const requested = typeof req.body?.limit === "number" ? req.body.limit : COMPACT_DEFAULT_LIMIT;
+      const limit = Math.max(1, Math.min(COMPACT_HARD_CAP, Math.floor(requested)));
+
+      const job: CompactJob = {
+        jobId: newJobId(),
+        userId: req.userId!,
+        projectId,
+        limit,
+        status: "queued",
+        currentStep: "queued",
+        migrated: [],
+        failed: [],
+        skipped: [],
+        errors: [],
+        candidatesFound: 0,
+        startedAt: new Date().toISOString(),
+      };
+      compactJobs.set(job.jobId, job);
+      trimOldJobs();
+
+      setImmediate(() => {
+        try { runCompactJob(job); } catch (e: any) {
+          job.status = "failed";
+          job.errors.push(e?.message || String(e));
+          job.completedAt = new Date().toISOString();
+        }
+      });
+
+      return res.status(202).json({
+        ok: true,
+        deprecated: true,
+        note: "Synchronous compact-images-test has been converted to an async job to avoid upstream 502s. Poll statusUrl.",
+        jobId: job.jobId,
+        status: job.status,
+        limit,
+        hardCap: COMPACT_HARD_CAP,
+        projectId,
+        statusUrl: `/api/projects/${projectId}/compact-images-test/status/${job.jobId}`,
+      });
     } catch (err: any) {
       console.error("compact-images-test error:", err);
       return res.status(500).json({ error: err.message });
