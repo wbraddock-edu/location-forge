@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/components/theme-provider";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import { apiRequest, setSessionToken, getSessionToken } from "@/lib/queryClient";
-import { imageSrc, hasImage, downloadImage, toBase64Async, type ImageValue } from "@/lib/imageRef";
+import { imageSrc, hasImage, downloadImage, toBase64Async, type ImageValue, type ImageAssetRef } from "@/lib/imageRef";
 import {
   Upload,
   FileText,
@@ -875,10 +875,13 @@ export default function HomePage() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const result = reader.result as string;
       const base64 = result.split(",")[1];
       if (!base64) return;
+      // Persist uploaded image as a project asset so it doesn't balloon the
+      // project JSON (same reason as generated images).
+      const stored = await persistImageAsAsset(base64, { title: layerKey });
       setDevelopedItems(prev => {
         const item = prev[expandedItem];
         if (!item) return prev;
@@ -890,7 +893,7 @@ export default function HomePage() {
           ...prev,
           [expandedItem]: {
             ...item,
-            visualImages: { ...item.visualImages, [layerKey]: base64 },
+            visualImages: { ...item.visualImages, [layerKey]: stored },
             visualImageHistory: {
               ...(item.visualImageHistory || {}),
               [layerKey]: updatedHistory,
@@ -971,6 +974,32 @@ export default function HomePage() {
   // Rate-limit delay helper
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  // Persist a freshly-generated base64 image to the server's volume as a
+  // project asset and return the ref the server wrote. If the upload fails
+  // for any reason, fall back to keeping the raw base64 in state so the user
+  // doesn't lose the image they just paid an API call for. This keeps the
+  // existing hybrid-rendering contract (visualImages can be string | ref).
+  const persistImageAsAsset = async (
+    base64: string,
+    meta: { prompt?: string; title?: string; category?: string; provider?: string; model?: string } = {}
+  ): Promise<ImageValue> => {
+    if (!currentProjectId) return base64;
+    try {
+      const res = await apiRequest("POST", `/api/project-assets/${currentProjectId}`, {
+        image: base64,
+        mime: "image/png",
+        ...meta,
+      });
+      const data = await res.json();
+      if (data && data.ok && data.ref && data.ref.kind === "asset") {
+        return data.ref as ImageAssetRef;
+      }
+    } catch (e) {
+      console.warn("persistImageAsAsset failed, falling back to base64:", e);
+    }
+    return base64;
+  };
+
   // Generate a single visual layer — now updates developedItems
   const handleGenerateVisual = async (layerKey: string, prompt: string, anchorOverride?: ImageValue) => {
     if (!prompt || !expandedItem) {
@@ -997,6 +1026,11 @@ export default function HomePage() {
       const imgData = await imgRes.json();
       if (imgData.error) throw new Error(imgData.error);
       if (imgData.image) {
+        const stored = await persistImageAsAsset(imgData.image, {
+          prompt,
+          title: layerKey,
+          provider: imgProvider,
+        });
         setDevelopedItems((prev) => {
           // Preserve old image in history before replacing
           const oldImage = prev[expandedItem].visualImages[layerKey];
@@ -1006,7 +1040,7 @@ export default function HomePage() {
             ...prev,
             [expandedItem]: {
               ...prev[expandedItem],
-              visualImages: { ...prev[expandedItem].visualImages, [layerKey]: imgData.image },
+              visualImages: { ...prev[expandedItem].visualImages, [layerKey]: stored },
               visualImageHistory: {
                 ...(prev[expandedItem].visualImageHistory || {}),
                 [layerKey]: updatedHistory,
@@ -1158,7 +1192,15 @@ export default function HomePage() {
           const b64: string | undefined = data.image;
           if (!b64) throw new Error("No image returned");
 
-          // Persist image immediately so partial progress survives
+          // Persist to disk as an asset ref first, then write the ref into state.
+          // Falls back to raw base64 if the upload fails, so users don't lose the
+          // generated image — hybrid rendering handles either shape.
+          const stored = await persistImageAsAsset(b64, {
+            prompt,
+            title: layer.key,
+            category: layer.category,
+            provider: imgProvider,
+          });
           setDevelopedItems((prev) => {
             const item = prev[locName];
             if (!item) return prev;
@@ -1171,7 +1213,7 @@ export default function HomePage() {
               ...prev,
               [locName]: {
                 ...item,
-                visualImages: { ...item.visualImages, [layer.key]: b64 },
+                visualImages: { ...item.visualImages, [layer.key]: stored },
                 visualImageHistory: {
                   ...(item.visualImageHistory || {}),
                   [layer.key]: updatedHistory,
@@ -1630,6 +1672,14 @@ export default function HomePage() {
     };
   }, [sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step]);
 
+  // Save-size guard thresholds. Express is capped at 100MB on the server
+  // (server/index.ts). Past 95MB the save will almost certainly fail with
+  // PayloadTooLargeError or OOM the Node heap. Past 75MB we warn the user once
+  // so they know to migrate embedded images to assets.
+  const SAVE_WARN_BYTES = 75 * 1024 * 1024;
+  const SAVE_BLOCK_BYTES = 95 * 1024 * 1024;
+  const lastSaveSizeWarnRef = useRef(0);
+
   const saveProjectState = useCallback(async () => {
     if (!currentProjectId) return;
     const state: any = latestStateRef.current ?? {
@@ -1637,10 +1687,66 @@ export default function HomePage() {
       customStylePrompt, customStyleInput,
       detectedLocations, developedItems, step,
     };
+    // Estimate the JSON payload size before shipping it. If we're near the
+    // server's 100MB limit, don't send a doomed autosave — that's what was
+    // spamming PayloadTooLargeError and killing the Node process. Stored
+    // images that are now asset refs are lightweight, but legacy base64
+    // strings or the establishing anchor can still push a project past the
+    // limit before migration runs.
+    let stateJson: string;
+    try {
+      stateJson = JSON.stringify(state);
+    } catch (e: any) {
+      console.error("saveProjectState serialization failed:", e);
+      return;
+    }
+    const bytes = stateJson.length;
+    if (bytes >= SAVE_BLOCK_BYTES) {
+      // Don't PUT. Surface a clear error once, not on every tick.
+      const now = Date.now();
+      if (now - lastSaveSizeWarnRef.current > 30_000) {
+        lastSaveSizeWarnRef.current = now;
+        const mb = (bytes / (1024 * 1024)).toFixed(1);
+        toast({
+          title: "Autosave paused — project too large",
+          description: `Project state is ${mb}MB, over the ${(SAVE_BLOCK_BYTES / (1024 * 1024)).toFixed(0)}MB save limit. Newly generated images will still save as assets. Contact support to migrate older embedded images.`,
+          variant: "destructive",
+        });
+        console.warn(`Blocked autosave: state=${mb}MB >= ${(SAVE_BLOCK_BYTES / (1024 * 1024)).toFixed(0)}MB`);
+      }
+      return;
+    }
+    if (bytes >= SAVE_WARN_BYTES) {
+      const now = Date.now();
+      if (now - lastSaveSizeWarnRef.current > 5 * 60_000) {
+        lastSaveSizeWarnRef.current = now;
+        const mb = (bytes / (1024 * 1024)).toFixed(1);
+        toast({
+          title: "Project approaching save-size limit",
+          description: `Project state is ${mb}MB. Older embedded images should be migrated to assets before it hits the 100MB limit.`,
+        });
+        console.warn(`Large autosave: state=${mb}MB (warn threshold ${(SAVE_WARN_BYTES / (1024 * 1024)).toFixed(0)}MB)`);
+      }
+    }
     try {
       await apiRequest("PUT", `/api/projects/${currentProjectId}`, { state });
-    } catch {}
-  }, [currentProjectId, sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step]);
+    } catch (err: any) {
+      // Surface a one-shot toast if the server rejected for size too, so the
+      // user sees a reason rather than a silent save failure.
+      const msg = String(err?.message || "");
+      if (msg.includes("413") || msg.toLowerCase().includes("payload_too_large")) {
+        const now = Date.now();
+        if (now - lastSaveSizeWarnRef.current > 30_000) {
+          lastSaveSizeWarnRef.current = now;
+          toast({
+            title: "Autosave rejected — project too large",
+            description: "The server rejected the save because project state is over the size limit. New images will still save as assets.",
+            variant: "destructive",
+          });
+        }
+      }
+    }
+  }, [currentProjectId, sourceText, sourceType, provider, apiKey, artStyle, customStylePrompt, customStyleInput, detectedLocations, developedItems, step, toast]);
 
   // Immediate (non-debounced) save. Flushes any pending debounced save and
   // issues a PUT right away using the freshest state snapshot. Use this after
@@ -1681,6 +1787,11 @@ export default function HomePage() {
       try {
         const token = getSessionToken();
         const body = JSON.stringify({ state });
+        // Don't spend the final beacon budget on a payload that'll be rejected.
+        if (body.length >= SAVE_BLOCK_BYTES) {
+          console.warn(`Skipping unload beacon: state=${(body.length / (1024 * 1024)).toFixed(1)}MB is over save limit`);
+          return;
+        }
         const baseUrl = `/api/projects/${currentProjectId}`;
         // The server auth middleware accepts the session token either as the
         // x-session-id header or as ?token=. sendBeacon can't set custom

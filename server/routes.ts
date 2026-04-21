@@ -1051,7 +1051,23 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const now = new Date().toISOString();
       const updates: string[] = [];
       const params: any[] = [];
-      if (state) { updates.push('state_json = ?'); params.push(JSON.stringify(state)); }
+      let stateJson: string | undefined;
+      if (state) {
+        stateJson = JSON.stringify(state);
+        const sizeMB = stateJson.length / (1024 * 1024);
+        if (stateJson.length >= SAVE_BLOCK_BYTES) {
+          console.warn(`Blocked oversize project save: project=${req.params.id} size=${sizeMB.toFixed(1)}MB`);
+          return res.status(413).json({
+            error: "payload_too_large",
+            message: `Project state is ${sizeMB.toFixed(1)}MB, which is over the ${(SAVE_BLOCK_BYTES / (1024 * 1024)).toFixed(0)}MB save limit. Migrate embedded images to assets before saving.`,
+            bytes: stateJson.length,
+          });
+        }
+        if (stateJson.length >= SAVE_WARN_BYTES) {
+          console.warn(`Large project save: project=${req.params.id} size=${sizeMB.toFixed(1)}MB`);
+        }
+        updates.push('state_json = ?'); params.push(stateJson);
+      }
       if (name) { updates.push('name = ?'); params.push(name.trim()); }
       updates.push('updated_at = ?'); params.push(now);
       params.push(parseInt(req.params.id as string), req.userId!);
@@ -1119,6 +1135,71 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       return res.status(500).json({ error: err.message });
     }
   });
+
+  // ── Write a new image asset for a project ──
+  // POST /api/project-assets/:projectId { image: <base64 | data URL>, mime?: string,
+  //   prompt?, title?, category?, provider?, model? }
+  // Writes the bytes to the volume under project-assets/<projectId>/<generated>.<ext>,
+  // verifies the file size is > 0, and returns an ImageAssetRef describing it so the
+  // client can store the ref in project state instead of embedding base64.
+  app.post("/api/project-assets/:projectId", (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.projectId as string, 10);
+      if (!Number.isFinite(projectId)) return res.status(400).json({ error: "invalid project id" });
+
+      // Ownership check — must be the project owner.
+      const owned = sqlite.prepare(
+        `SELECT id FROM projects WHERE id = ? AND user_id = ?`
+      ).get(projectId, req.userId!);
+      if (!owned) return res.status(404).json({ error: "not found" });
+
+      const raw = req.body?.image;
+      if (typeof raw !== "string" || !raw) {
+        return res.status(400).json({ error: "image (base64 or data URL) required" });
+      }
+
+      // Accept either a raw base64 blob or a data:image/<mime>;base64,<...> URL.
+      let mime: string = typeof req.body?.mime === "string" && req.body.mime ? req.body.mime : "image/png";
+      let b64 = raw;
+      const m = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+      if (m) {
+        mime = m[1];
+        b64 = m[2];
+      }
+      if (!/^[A-Za-z0-9+/=\s]+$/.test(b64)) {
+        return res.status(400).json({ error: "image is not valid base64" });
+      }
+
+      const written = writeImageToDisk(projectId, b64, mime);
+
+      const ref: ImageAssetRef = {
+        kind: "asset",
+        url: written.url,
+        path: written.absPath,
+        bytes: written.bytes,
+        mime,
+        migratedAt: new Date().toISOString(),
+        prompt: typeof req.body?.prompt === "string" ? req.body.prompt : undefined,
+        title: typeof req.body?.title === "string" ? req.body.title : undefined,
+        category: typeof req.body?.category === "string" ? req.body.category : undefined,
+        provider: typeof req.body?.provider === "string" ? req.body.provider : undefined,
+        model: typeof req.body?.model === "string" ? req.body.model : undefined,
+      };
+      return res.json({ ok: true, ref });
+    } catch (err: any) {
+      console.error("project-assets POST error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Save-size guard for project state PUTs ──
+  // Express body parser is set to a 100MB limit (server/index.ts). If a client is
+  // about to ship a project whose state JSON is close to that limit, we want to
+  // refuse it here (415/413) with a clear message instead of letting the parser
+  // kill the request with PayloadTooLargeError or Node blowing its heap. The
+  // client also pre-checks size before PUT; this is the backend belt-and-braces.
+  const SAVE_WARN_BYTES = 75 * 1024 * 1024;
+  const SAVE_BLOCK_BYTES = 95 * 1024 * 1024;
 
   // ── Limited, reversible image compaction test ──
   // POST /api/projects/:id/compact-images-test { limit?: number (default 3, max 5),
