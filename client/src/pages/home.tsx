@@ -1408,13 +1408,17 @@ export default function HomePage() {
   // ── Auth Handlers ──
 
   const checkSession = async () => {
-    const token = getSessionToken();
-    if (!token) { setAuthLoading(false); return; }
+    // Shared Forge persistent auth: always hit /api/auth/me on load so the
+    // HttpOnly cookie can restore the session after a hard refresh. Never
+    // short-circuit based on in-memory token alone — that would bounce a
+    // refreshed user to /login even when the cookie is valid.
     try {
       const res = await apiRequest("GET", "/api/auth/me");
       const user = await res.json();
       setAuthUser(user);
-      setAppScreen("projects");
+      // Preserve current route/screen on refresh. Only auto-nav to projects
+      // if we were still sitting on the auth screen.
+      setAppScreen((prev) => (prev === "auth" ? "projects" : prev));
     } catch {
       setSessionToken(null);
     } finally {

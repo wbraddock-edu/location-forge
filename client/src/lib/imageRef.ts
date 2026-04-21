@@ -68,7 +68,7 @@ export async function imageBlob(v: ImageValue): Promise<Blob | null> {
     const token = getSessionToken();
     const headers: Record<string, string> = {};
     if (token) headers["X-Session-Id"] = token;
-    const res = await fetch(v.url, { headers });
+    const res = await fetch(v.url, { headers, credentials: "include" });
     if (!res.ok) return null;
     return await res.blob();
   }

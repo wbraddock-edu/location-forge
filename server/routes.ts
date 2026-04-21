@@ -588,6 +588,70 @@ function buildDocx(profile: LocationProfile, imageBuffers?: Record<string, Buffe
   return Packer.toBuffer(doc) as Promise<Buffer>;
 }
 
+// ── Shared Forge persistent auth: cookie helpers ──
+
+const AUTH_COOKIE_NAME = "forge_session";
+const AUTH_COOKIE_MAX_AGE_SEC = 30 * 24 * 60 * 60; // 30 days
+
+function isProd(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx < 0) continue;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    if (!k) continue;
+    try { out[k] = decodeURIComponent(v); } catch { out[k] = v; }
+  }
+  return out;
+}
+
+function getSessionTokenFromReq(req: Request): string | undefined {
+  const headerToken = req.headers["x-session-id"] as string | undefined;
+  if (headerToken) return headerToken;
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies[AUTH_COOKIE_NAME]) return cookies[AUTH_COOKIE_NAME];
+  const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
+  return queryToken;
+}
+
+function setSessionCookie(res: Response, token: string): void {
+  // Secure HttpOnly cookie. SameSite=Lax by default; upgrade to None+Secure for
+  // cross-site embeds (set FORGE_COOKIE_SAMESITE=none).
+  const sameSiteEnv = (process.env.FORGE_COOKIE_SAMESITE || "").toLowerCase();
+  const sameSite = sameSiteEnv === "none" ? "None" : sameSiteEnv === "strict" ? "Strict" : "Lax";
+  const secure = isProd() || sameSite === "None";
+  const parts = [
+    `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    `Max-Age=${AUTH_COOKIE_MAX_AGE_SEC}`,
+    `SameSite=${sameSite}`,
+  ];
+  if (secure) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function clearSessionCookie(res: Response): void {
+  const sameSiteEnv = (process.env.FORGE_COOKIE_SAMESITE || "").toLowerCase();
+  const sameSite = sameSiteEnv === "none" ? "None" : sameSiteEnv === "strict" ? "Strict" : "Lax";
+  const secure = isProd() || sameSite === "None";
+  const parts = [
+    `${AUTH_COOKIE_NAME}=`,
+    "Path=/",
+    "HttpOnly",
+    "Max-Age=0",
+    `SameSite=${sameSite}`,
+  ];
+  if (secure) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
 // ── Route Registration ──
 
 export async function registerRoutes(httpServer: Server, app: Express) {
@@ -626,6 +690,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       db.insert(authSessions).values({ userId: user.id, token, expiresAt, createdAt: now }).run();
 
+      setSessionCookie(res, token);
       return res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName } });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -659,6 +724,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       db.insert(authSessions).values({ userId: user.id, token, expiresAt, createdAt: now }).run();
 
+      setSessionCookie(res, token);
       return res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName } });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -666,24 +732,31 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/auth/logout", (req: Request, res: Response) => {
-    const token = req.headers["x-session-id"] as string;
+    const token = getSessionTokenFromReq(req);
     if (token) {
       db.delete(authSessions).where(eq(authSessions.token, token)).run();
     }
+    clearSessionCookie(res);
     return res.json({ ok: true });
   });
 
   app.get("/api/auth/me", (req: Request, res: Response) => {
-    const token = req.headers["x-session-id"] as string;
+    const token = getSessionTokenFromReq(req);
     if (!token) return res.status(401).json({ error: "Not authenticated" });
 
     const session = db.select().from(authSessions).where(eq(authSessions.token, token)).get();
     if (!session || new Date(session.expiresAt) < new Date()) {
+      clearSessionCookie(res);
       return res.status(401).json({ error: "Session expired" });
     }
     const user = db.select().from(users).where(eq(users.id, session.userId)).get();
-    if (!user) return res.status(401).json({ error: "User not found" });
+    if (!user) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "User not found" });
+    }
 
+    // Refresh cookie so long-lived sessions stay sticky across hard refreshes.
+    setSessionCookie(res, token);
     return res.json({ id: user.id, email: user.email, displayName: user.displayName });
   });
 
@@ -723,7 +796,16 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       db.update(users).set({ passwordHash }).where(eq(users.id, reset.userId)).run();
       db.delete(passwordResets).where(eq(passwordResets.token, token)).run();
 
-      return res.json({ ok: true, message: "Password has been reset. You can now sign in." });
+      // Invalidate any existing sessions for the user, then issue a fresh one
+      // (shared Forge auth: reset leaves you signed in on this device).
+      db.delete(authSessions).where(eq(authSessions.userId, reset.userId)).run();
+      const now = new Date().toISOString();
+      const newToken = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      db.insert(authSessions).values({ userId: reset.userId, token: newToken, expiresAt, createdAt: now }).run();
+      setSessionCookie(res, newToken);
+
+      return res.json({ ok: true, token: newToken, message: "Password has been reset. You're signed in." });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -896,10 +978,9 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     if (req.path.startsWith("/auth/") || req.path.startsWith("/auth") || req.path === "/stripe/webhook") {
       return next();
     }
-    // Support auth via x-session-id header OR ?token= query param (for <img src>).
-    const headerToken = req.headers["x-session-id"] as string | undefined;
-    const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
-    const token = headerToken || queryToken;
+    // Support auth via HttpOnly cookie, x-session-id header, OR ?token= query
+    // param (for <img src>). Cookie is the shared Forge persistent auth path.
+    const token = getSessionTokenFromReq(req);
     if (!token) return res.status(401).json({ error: "Authentication required" });
 
     const session = db.select().from(authSessions).where(eq(authSessions.token, token)).get();

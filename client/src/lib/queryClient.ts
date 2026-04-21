@@ -2,7 +2,10 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
-// Session token management (in-memory only — no localStorage for iframe compat)
+// Shared Forge persistent auth: the server-issued HttpOnly cookie is the
+// source of truth across hard refreshes. We also keep a short-lived
+// in-memory bearer for back-compat with code paths that need a raw token
+// (e.g. <img src>?token= and the legacy X-Session-Id header).
 let sessionToken: string | null = null;
 
 export function setSessionToken(token: string | null) {
@@ -44,6 +47,7 @@ export async function apiRequest(
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
+    credentials: "include",
   });
 
   await throwIfResNotOk(res);
@@ -58,6 +62,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
       headers: authHeaders(),
+      credentials: "include",
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
