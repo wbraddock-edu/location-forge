@@ -1569,8 +1569,23 @@ export default function HomePage() {
       if (state.customStyleInput) setCustomStyleInput(state.customStyleInput);
       if (state.detectedLocations) setDetectedLocations(state.detectedLocations);
       if (state.developedItems) setDevelopedItems(state.developedItems);
-      if (state.step) setStep(state.step);
-      else setStep(state.detectedLocations?.length > 0 ? "dashboard" : "upload");
+      // Prefer the Locations view whenever the project already has locations,
+      // so opening/refreshing a populated project lands on the list instead of
+      // the empty "Build Location Profiles" upload screen. The saved step is
+      // still honored for meaningful in-project steps ("analyzing", "results").
+      // "results" requires an expandedItem that we don't persist, so fall back
+      // to "dashboard" to avoid a blank main area.
+      const hasLocations = (state.detectedLocations?.length ?? 0) > 0
+        || Object.keys(state.developedItems ?? {}).length > 0;
+      const savedStep: Step | undefined = state.step;
+      let initialStep: Step;
+      if (hasLocations) {
+        if (savedStep === "analyzing") initialStep = "analyzing";
+        else initialStep = "dashboard";
+      } else {
+        initialStep = savedStep ?? "upload";
+      }
+      setStep(initialStep);
       setAppScreen("app");
     } catch (err: any) {
       toast({ title: "Error", description: "Failed to load project", variant: "destructive" });
